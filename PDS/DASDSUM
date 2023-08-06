@@ -1,0 +1,945 @@
+DASDSUM  TITLE '                            L I S T   D A S D   U S A G>
+                E   B Y   H L Q'
+***********************************************************************
+*                                                                     *
+* Title -- DASDSUM                                                    *
+*                                                                     *
+* Function / Operation -- DASDSUM scans the FUSRxx volumes and        *
+*   prepares a report showing data set allocation by the data set     *
+*   high level qualifier.  The report is sorted by the sum of         *
+*   allocated tracks.  For example -                                  *
+*     HLQ    DATA SETS  ALLOCATED  USED                               *
+*   SYSFAN        14        9462   6420 2013/03/11 2006/04/03   3000 S*
+*   SYSFAN     -- A high level qualifier                              *
+*   14         -- Number of data sets                                 *
+*   9462       -- Allocated tracks in the data sets                   *
+*   6420       -- Used tracks in the data sets                        *
+*   2013/03/11 -- Date most recently allocated data set               *
+*   2006/04/03 -- Oldest date                                         *
+*   3000       -- Number of tracks and data set name of the largest   *
+*                 data set                                            *
+*   SYSFAN.MAINUSER.PRDBATCH.LOG                                      *
+*                                                                     *
+* JCL --                                                              *
+*   //        EXEC PGM=DASDSUM,PARM='prefix'  (VOLUME PREFIX)         *
+*   //SYSPRINT DD  -- Output report data set --                       *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L0 -- April 2013                                                *
+*   SBG  -- May   2021                                          SBG   *
+*                                                                     *
+* Attributes -- DASDSUM is not reenterable, not refreshable and not   *
+*   reusable.  DASDSUM operates in TCB mode, problem state and        *
+*   problem key.  DASDSUM uses no APF restricted operating            *
+*   system resources.                                                 *
+*                                                                     *
+* Messages --                                                         *
+*     HLQ    DATA SETS  ALLOCATED  USED                               *
+*   PRINO         87       22908  21701                               *
+*                                                                     *
+*   Reason -- This message group is the primary report.               *
+*   Action -- DASDSUM produces one line for each data set high        *
+*     level qualifier it found.                                       *
+*   Response -- Review the report.                                    *
+*                                                                     *
+*   SCANNING VOLUME xxxxxx ON hhhhhh                                  *
+*                                                                     *
+*   Reason -- DASDSUM has successfully allocated volume xxxxxx        *
+*     located on device hhhh                                          *
+*   Action -- DASDSUM will read the VTOC and save high level          *
+*     qualifier information for the report.                           *
+*   Response -- Review the report.                                    *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         MACRO
+&NAME    GENCCWS &NUM,&IOB,&IOBUF
+         LCLA  &N
+&NAME    CCW   X'31',&IOB+35,X'40',5
+         CCW   X'08',&NAME,0,0
+.L       AIF   (&N GE &NUM-1).LAST
+         CCW   X'9E',&IOBUF+(&N*DSCBSIZE),X'40',DSCBSIZE
+&N       SETA  &N+1
+         AGO   .L
+.LAST    CCW   X'9E',&IOBUF+(&N*DSCBSIZE),0,DSCBSIZE
+         MEND
+         SPACE 5
+         PUNCH ' ORDER DASDSUM(P),MINIFMT,QSORTS'
+         SPACE 1
+DASDSUM  RSECT                     DEFINE PROGRAM CSECT
+         SPACE 1
+AUSER    DSECT                     DEFINE AN HLQ ENTRY
+AUNEXT   DS    A                   ADDRESS OF NEXT AUSER
+AUUSER   DS    CL8                 USER ID / HLQ
+AUCOUNT  DS    F                   NUMBER OF DATA SETS
+AUALLOC  DS    F                   TOTAL TRACKS ALLOCATED
+AUUSED   DS    F                   TOTAL TRACKS USED
+AUCRDATE1 DS   0XL3,PL4            NOST RECENT CREATION DATE
+AUCRDATE2 DS   0XL3,PL4            OLDEST CREATION DATE
+AUMAXTRK DS    F                   NUMBER OF TRACKS IN LARGEST DATA SET
+AUMAXDS  DS    CL44                LARGEST DATA SET
+         DS    0D
+AUSIZE   EQU   *-AUSER             SIZE OF AN AUSER
+         SPACE 1
+F23      DSECT
+F23NEXT  DS    A
+F23DSCB  DS    XL(DSCBSIZE),0D
+F23SIZE  EQU   *-F23
+         SPACE 1
+         PUSH  PRINT
+         PRINT NOGEN
+         DCBD  DSORG=QS,DEVD=DA
+         IEFZB4D0 ,
+         IEFZB4D2 ,
+         IEFUCBOB ,
+         CVT   DSECT=YES
+         IHADVCT ,
+DSCB     DSECT
+COUNT    DS    XL8'0'
+         IECSDSL1 1
+DSCBSIZE EQU   *-DSCB
+         ORG   COUNT+L'COUNT
+         IECSDSL1 3
+         ORG   ,
+         POP   PRINT
+         EJECT
+         YREGS                                                  SBG
+DASDSUM  RSECT                     RETURN TO PROGRAM CSECT
+DASDSUM  AMODE 31                  DEFINE PROGRAM AMODE
+DASDSUM  RMODE 24                  DEFINE PROGRAM RMODE
+         USING *,12                ESTABLISH PROGRAM ADDRESSABILITY
+         USING DASDDATA,11         ESTABLISH DATA AREA ADDRESSABILITY
+         SAVE  (14,12),,'DASDSUM &SYSDATE &SYSTIME'  SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         B     *+L'*+4             BR AROUND DATA AREA ADDRESS
+         DC    AL4(DASDDATA)       DATA AREA ADDRESS
+         ICM   11,B'1111',*-4      LOAD DATA AREA ADDRESS
+         LA    15,SAVEAREA         LOAD ADDR OF THE NEW SAVE AREA
+         ST    13,4(,15)           ADD NEW SAVE AREA TO THE
+         ST    15,8(,13)            SAVE AREA CHAIN
+         LR    13,15               ESTABLISH NEW SAVE AREA ADDRESS
+         ST    1,SAVER1A           SAVE PARM                    SBG
+         LA    0,FMTWORK           LOAD ADDR OF THE MINIFMT WORK AREA
+         LA    1,FMT01             LOAD ADDR OF THE FORMAT
+         L     15,=V(MINIFMT)      LOAD ADDR OF MINIFMT
+         CALL  (15)                GENERATE YYYY/MM/DD HH:MM
+         LH    15,0(,1)            LOAD THE MSG LENGTH
+         AHI   15,-4               SUBTRACT SIZE OF THE RDW
+         LA    0,4(,1)             COMPUTE ADDR OF YYYY/MM/DD
+         LR    1,15                COPY LENGTH TO REG 1
+         LA    14,PAGEHDR+95       LOAD ADDR OF DATE/TIME IN PAGE HDR
+         MVCL  14,0                COPY YYYY/MM/DD HH:MM TO PAGE HDR
+         LA    1,OPARM1            LOAD ADDR OF AN OPEN PARM LIST
+         BRAS  14,OPENLIST         OPEN SYSPRINT
+         LTR   15,15               TEST RETIRN CODE
+         JZ    FINDVOL             BR IF SYSPRINT IS OPEN
+         WTO   'DASDS001A UNABLE TO OPEN SYSPRINT!',ROUTCDE=11,DESC=7
+         J     EXIT
+FINDVOL  UCBSCAN COPY,WORKAREA=UCBSWORK,UCBAREA=UCBSUCB,  FIND A DASD ->
+               DYNAMIC=YES,RANGE=ALL,DEVCLASS=DASD,        UCB        ->
+               MF=(E,UCBSPARM)
+         LTR   15,15               TEST THE RETURN CODE
+         JNZ   REPORT              BR IF NO MORE VOLUMES
+*-->>                                                           SBG
+         STM   R1,R3,SAVER1T3                                   SBG
+         L     R1,SAVER1A          RESTORE PARM POINTER         SBG
+         LTR   R1,R1               ANY PARM POINTER?            SBG
+         BZ    NOPARMS             B IF NOT.                    SBG
+         L     R3,0(,R1)           POINT TO BUFFER              SBG
+         LTR   R3,R3               ANY?                         SBG
+         BZ    NOPARMS             B IF NOT.                    SBG
+         LH    R2,0(,R3)           LOAD LENGTH.                 SBG
+         LTR   R2,R2               ANY?                         SBG
+         BZ    NOPARMS             B IF NOT.                    SBG
+         LA    R3,2(,R3)           POINT TO PARM.               SBG
+         BCTR  R2,0                ONE LESS FOR EXECUTE         SBG
+         EX    R2,VOLFILT                                       SBG
+         JNE   FINDVOL             BR IF WE'RE NOT INTERESTED   SBG
+         B     NOPARMS                                          SBG
+VOLFILT  CLC   0(0,R3),(UCBVOLI-UCBOB)+UCBSUCB  TEST THE VOL SERIAL SBG
+NOPARMS  DS    0H                                               SBG
+         LM    R1,R3,SAVER1T3                                   SBG
+*-->>                                                           SBG
+         MVC   DYNPARM(AL),A       COPY THE DYNALLOV PARMS TO WORK AREA
+         MVC   (AVOL-A)+DYNPARM,(UCBVOLI-UCBOB)+UCBSUCB  COPY THE VOL
+         LA    1,DYNPARM           LOAD ADDR OF THE DYNALLOC PARMS
+         BRAS  14,DYNALLOC         ALLOCATE THE VOLUME
+         LTR   15,15               TEST THE RETURN CODE
+         JNZ   FINDVOL             BR IF ERROR
+         LHI   0,1                 SET REG 0
+         A     0,VOLS              UPDATE THE VOLUME COUNT
+         ST    0,VOLS
+         SR    1,1                 SET REG  1 = 0
+         SR    14,14               SET REG 14 = 0
+         IC    1,UCBTBYT4-UCBOB+UCBSUCB  LOAD THE DEVICE TYPE
+         L     15,CVTPTR           LOAD ADDR OF THE CVT
+         L     15,CVTZDTAB-CVTMAP(,15)  LOAD ADDR OF THE DEVICE TABLE
+         IC    14,0(1,15)          LOAD THE INDEX
+         AR    14,15               COMPUTE ADDR OF THE DVCT FOR THE   ->
+                                    DEVICE
+         LH    0,DVCTRK-DVCT(,14)  LOAD TRACKS / CYLINDER
+         STH   0,CYLSIZE           SAVE TRACKS / CYLINDER
+         MVC   (DCBDDNAM-IHADCB)+EXCPDCB,(ADDN-A)+DYNPARM  COPY DDN
+         RDJFCB MF=(E,OPARM2)      GET THE JFCB
+         MVI   JFCBDSNM,X'04'      RESET THE DSN TO THE VTOC DSN
+         MVC   JFCBDSNM+1(L'JFCBDSNM-1),JFCBDSNM
+         OI    JFCBTSDM,JFCNWRIT
+         OPEN  MF=(E,OPARM2),TYPE=J  OPEN THE VTOC
+         LA    1,FMT02             LOAD ADDR OF THE FORMAT
+         BRAS  14,FMTLINE          WRITE SCANING VVVVVV
+         SR    0,0                 SET TTRN = 000000
+         L     1,(DCBDEBAD-IHADCB)+EXCPDCB  LOAD THE DEB ADDRESS
+         LA    2,EXCPIOB+32        LOAD ADDR OF IOBSEEK
+         L     15,CVTPTR           LOAD ADDR OF THE CVT
+         L     15,CVTPCNVT-CVTMAP(,15)  LOAD ADDR OF CONVERSION RTN
+         STM   8,13,12(13)         SAVE REGS 8 THROUGH 13
+         LR    8,13                COPY REG 13 TO REG 8
+         BALR  14,15               CONVERT TTRN TO MBBCCHHR
+         LM    8,13,12(8)          RESTORE REGS 8 THROUGH 13
+         LTR   15,15               TEST THE RETURN CODE
+         JZ    *+L'*+2             BR IF MBBCCHHR GENERATED OK
+         DC    H'0'                OOPS
+NEXTGRP  MVI   EXCPECB,0           RESET THE ECB
+         EXCP  EXCPIOB             READ 160 DSCBS
+         LHI   0,1                 SET REG 0
+         A     0,SEXCPS            UPDATE SEXCPS
+         ST    0,SEXCPS
+         WAIT  1,ECB=EXCPECB       WAIT FOR I/O TO COMPLETE
+         L     2,EXCPIOB+16        LOAD ADDR OF THE FIRST CCW
+         L     3,EXCPIOB+8         LOAD ADDR OF THE LAST CCW
+         N     2,=A(X'FFFFFF')     ISOLATE THE 24-BIT
+         N     3,=A(X'FFFFFF')      CCW ADDRESSES
+         AHI   2,16                COMPUTE ADDR OF THE 1ST READ CKD CCW
+         AHI   3,-8                BACKUP 1 READ CKD CCW
+         CLI   EXCPECB,X'7F'       TEST COMPLETION STATUS
+         JE    *+L'*+4             BR IF NO ERROR
+         AHI   3,-8                BACKUP 1 MORE READ CKD CCW
+         CR    3,2                 COMPARE LAST CCW ADDR W/ 1ST       ->
+                                    CCW ADDR
+         JNL   *+L'*+2             BR IF 1ST ADDR <= LAST ADDR
+         DC    H'0'                OOPS
+         CLI   EXCPECB,X'41'       TEST COMPLETION STATUS
+         JNE   *+L'*+2             BR IF NOT AN ERROR
+         DC    H'0'                OOPS
+NEXTCCW  L     4,0(,2)             LOAD DSCB ADDRESS FROM THE CCW
+         N     4,=A(X'FFFFFF')     ISOLATE THE 24-BIT DSCB ADDRESS
+         USING DSCB,4              ESTABLISH DSCB ADDRESSABILITY
+         CLI   DS1FMTID,C'2'       TEST IF FORMAT 2
+         JE    GETF23              BR IF SO
+         CLI   DS1FMTID,C'3'       TEST IF FORMAT 3
+         JNE   TESTF1              BR IF NOT
+GETF23   LHI   0,F23SIZE           LOAD THE SIZE OF THE SAVED DSCB
+         GETMAIN RU,LV=(0),LOC=(31,ANY) GET STORAGE
+         MVC   F23DSCB-F23(,1),0(4)  COPY THE DSCB
+         MVC   F23NEXT-F23(,1),F23LIST  ADD THE F23 TO THE LIST
+         ST    1,F23LIST
+         J     BUMPCCW
+TESTF1   CLI   DS1FMTID,C'1'       TEST IF FORMAT 1 DSCB
+         JNE   BUMPCCW             BR IF NOT
+         LHI   0,1                 SET REG 0
+         A     0,DSCOUNT           UPDATE DSCOUNT
+         ST    0,DSCOUNT
+         LA    1,DS1DSNAM+8        LOAD END OF THE HLQ
+         LA    0,DS1DSNAM          LOAD START OF THE HLQ
+         ST    2,12(,13)           SAVE REG 2
+         TRT   DS1DSNAM(8),ADDUTAB FIND THE REAL END OF THE HLQ
+         L     2,12(,13)           RESTORE REG 2
+         SR    1,0                 COMPUTE ACTUAL LENGTH OF THE HLQ
+         JP    *+L'*+2             BE IF LENGTH > 0
+         DC    H'0'                OOPS
+         LA    14,FMTWORK          LOAD A WORK AREA ADDRESS
+         LA    15,8                LOAD THE LENGTH OF THE WORK AREA
+         ICM   1,B'1000',=C' '     LOAD THE FILL CHARACTER
+         MVCL  14,0                COPY THE HLQ TO THE WORK AREA
+         LA    1,FMTWORK           LOAD ADDR OF THE WORK AREA
+         BRAS  14,ADDUSER          ADD THE HLQ TO THE HLQ TABLE
+         LR    5,1                 COPY THE AUSER ADDR TO REG 5
+         USING AUSER,5             ESTABLISH AUSER ADDRESSABILITY
+         OC    DS1CREDT,DS1CREDT   TEST IF CREATION DATE SPECIFIED
+         JZ    NOCREDT             BR IF NOT
+         OC    AUCRDATE1,AUCRDATE1 TEST IF WE HAVE DATES
+         JNZ   *+L'*+16            BR IF SO
+         MVC   AUCRDATE1,DS1CREDT  INIT THE DATES
+         MVC   AUCRDATE2,DS1CREDT
+         J     NOCREDT             AND CONTINUE
+         CLC   DS1CREDT,AUCRDATE1  COMPARE CREATION DATE W/ HIGH      ->
+                                    CREATION DATE FOR THE USER
+         JNH   *+L'*+6             BR IF DATE <= HIGH DATE FOR THE USER
+         MVC   AUCRDATE1,DS1CREDT  RESET HIGH CREATION DATE FOR USER
+         CLC   DS1CREDT,AUCRDATE2  COMPARE CREATION DSTE W/ LOW       ->
+                                    CREATION DATE FOR THE USER
+         JNL   *+L'*+6             BR IF DATE >= LOW DATE FOR THE USER
+         MVC   AUCRDATE2,DS1CREDT  RESET LO CREATION DATE FOR USER
+NOCREDT  LHI   0,1                 SET REG 0 = 1
+         A     0,AUCOUNT           UPDATE AUCOUNT
+         ST    0,AUCOUNT
+         SR    6,6                 SET REG 6 = 0
+         ST    6,DSSIZE            INIT DSSIZE FOR THIS DATA SET
+         ICM   6,B'0001',DS1NOEPV  LOAD NUMBER OF EXTENTS IN THE      ->
+                                    DATA SET
+         JZ    BUMPCCW             BR IF NONE
+         LHI   7,3                 LOAD NUMBER OF EXTENT ENTRIES      ->
+                                    IN THE F1 DSCB
+         LA    8,DS1EXT1           LOAD ADDR OF THE 1ST EXTENT ENTRY
+F1SIZE   BRAS  14,XTNTSIZE         COMPUTE NUMBER OF TRACKS IN THE    ->
+                                    EXTENT ENTRIES IN THE F1 DSCB
+         J     DSDONE              BR IF ALL EXTENTS ANALYZED
+         A     1,DSSIZE            UPDATE ALLOCATED TRACKS FOR DATA SET
+         ST    1,DSSIZE
+         MVC   F3IOB+35(5),DS1PTRDS COPY ADDR OF THE FIRST F3 DSCB TO ->
+                                     THE IOB
+FINDF3   LA    1,F23LIST-(F23NEXT-F23)  LOAD ADDR OF A DUMMY F23
+FINDF3X  ICM   1,B'1111',F23NEXT-F23(1)  LOAD ADDR OF THE NEXT F23
+         JZ    FINDF3Y                    BR IF END OF LIST
+         CLC   F3IOB+35(5),(COUNT-DSCB)+(F23DSCB-F23)(1)  TEST IF WE  ->
+                                                          HAVE THE DSCB
+         JNE   FINDF3X             BR IF NOT, TRY THE NEXT ONE
+         MVC   F3DSCB,F23DSCB-F23(1)  COPY THE DSCB
+         J     TESTF3
+FINDF3Y  L     1,F3IOB+16          LOAD ADDR OF THE FIRST READ CCWS
+         N     1,=A(X'FFFFFF')     ISOLATE THE 24-BIT CCW ADDRESS
+         L     1,16(,1)            LOAD ADDR OF THE FIRST DSCB IN THE ->
+                                    I/O BUFFER
+         N     1,=A(X'FFFFFF')     ISOLATE THE 24-BIT DSCB ADDRESS
+         LHI   14,DSCBSIZE         LOAD THE SIZE OF A DSCB
+         L     15,0(,3)            LOAD ADDR OF THE LAST DSCB IN THE  ->
+                                    I/O BUFFER
+         N     15,=A(X'FFFFFF')    ISOLATE THE 24-BIT DSCB ADDRESS
+SCANF3   CLC   COUNT-DSCB(5,1),F3IOB+35 TEST IF DSCB IS IN THE I/O    ->
+                                         BUFFER
+         JNE   *+L'*+10            WELL, IT'S NOT THIS DSCB
+COPYF3   MVC   F3DSCB,0(1)         COPY THE DSCB TO F3DSCB
+         J     TESTF3
+         BRXLE 1,14,SCANF3         GO TRY THE NEXT DSCB IN THE I/O    ->
+                                    BUFFER
+READF3   MVI   F3ECB,0             RESET THE ECB
+         EXCP  F3IOB               READ THE FORMAT 3 DSCB
+         LHI   0,1                 SET REG 0
+         A     0,F3EXCPS           UPDATE F3EXCPS
+         ST    0,F3EXCPS
+         WAIT  1,ECB=F3ECB         WAIT FOR I/O TO COMPLETE
+         CLI   F3ECB,X'7F'         TEST COMPLETION STATUS
+         JE    *+L'*+2             BR IF WE READ THE F3 DSCB
+         DC    H'0'                OOPS
+TESTF3   CLI   DS3FMTID-DSCB+F3DSCB,C'3'  VERIFY WE READ A F3 DSCB
+         JE    F3XTNTS                     BR IF SO
+         CLI   DS3FMTID-DSCB+F3DSCB,C'2'  TEST IF WE READ A F2 DSCB
+         JE    *+L'*+2                    BR IF SO
+         DC    H'0'                OOPS
+         MVC   F3IOB+35(5),DS3PTRDS-DSCB+F3DSCB  COPY THE NEXT DSCB   ->
+                                                  ADDR TO THE IOB
+         J     FINDF3              GO READ IT
+F3XTNTS  CLC   DS3KEYID-DSCB+F3DSCB,=(L'DS3KEYID)X'03'  ONE MORE TEST
+         JE    *+L'*+2             BR IF OK
+         DC    H'0'                OOPS
+         LA    8,DS3EXT1-DSCB+F3DSCB LOAD ADDR OF THE FIRST EXTENT    ->
+                                    ENTRY IN THE KEY AREA
+         LHI   7,4                 LOAD NUMBER OF EXTENT ENTRIES      ->
+                                    IN THE KEY AREA
+         BRAS  14,XTNTSIZE         GET SPACE ALLOCATED IN THE KEY     ->
+                                    AREA
+         J     DSDONE              BE IF ALL EXTENTS CHECKED
+         A     1,AUALLOC           UPDATE AUALLOC
+         ST    1,AUALLOC
+         LA    8,DS3ADEXT-DSCB+F3DSCB  LOAD ADDR OF THE FIRST EXTENT  ->
+                                        ENTRY IN THE DATA AREA
+         LHI   7,9                 LOAD NUMBER OF EXTENT ENTRIES IN   ->
+                                    IN THE DATA AREA
+         BRAS  14,XTNTSIZE         GET NUMBER OF TRACKS IN THE EXTENTS
+         J     DSDONE              BR IF ALL EXTENTS PROCESSED
+         A     1,DSSIZE            UPDATE DSSIZE
+         ST    1,DSSIZE
+         MVC   F3IOB+35(5),DS3PTRDS-DSCB+F3DSCB  COPY ADDR OF THE     ->
+                                                  F3 DSCB TO THE IOB
+         J     FINDF3              READ THE NEXT F3 DSCB
+DSDONE   A     1,DSSIZE            UPDATE ALLOCATED TRACKS
+         ST    1,DSSIZE
+         C     1,AUMAXTRK          TEST IF NEW MAX DATA SET FOR THE HLQ
+         JNH   *+L'*+10            BR IF NOT
+         ST    1,AUMAXTRK          SAVE THE NEW MAX SIZE
+         MVC   AUMAXDS,DS1DSNAM    SAVE THE DATA SET NAME
+         A     1,AUALLOC           ADD TRAACKS IN THE DATA SET
+         ST    1,AUALLOC           UPDATE ALLOCATED TRACKS
+         ICM   0,B'0011',DS1DSORG  LOAD THE DSORG
+         N     0,=AL1(0,0,255-DCBDSGU,255)  REMOVE THE UNUSABLE       ->
+                                             ATTRIBUTE
+         LA    1,DSOTAB            LOAD THE ADDR OF THE DSORG TABLE
+         LA    14,2                LOAD LENGTH OF A DSORG TABLE ENTRY
+         LA    15,DSOTABE          LOAD ADDR OF THE LAST DSORG TABLE
+USED     CLM   0,B'0011',0(1)      TEST THE DSORG
+         JNE   BUMPDSO             BR IF NOT A MATCH
+         CLM   0,B'0011',=AL1(DCBDSGPO,0)  TEST IF DSORG=PO
+         JNE   NOTPDS              BR IF NOT
+         TM    DS1SMSFG,DS1PDSE+DS1PDSEX  TEST IF PDSE OR HFS
+         JNZ   USEALLOC            BR IF SO
+NOTPDS   ICM   0,B'0011',DS1LSTAR  LOAD LAST USED TRACK
+         CLI   DS1LSTAR+2,0        TEST IF R = 0
+         JZ    UPDUSED             BR IF SO
+         AHI   0,1                 ADD 1
+         J     UPDUSED             AND CONTINUE
+BUMPDSO  BRXLE 1,14,USED           CONTINUE SCAN
+USEALLOC L     0,DSSIZE            DSORG NOT IN TABLE,                ->
+                                    USE ALLOCATED TRACKS
+UPDUSED  A     0,AUUSED            ADD USED TRACKS
+         ST    0,AUUSED            UPDATE USED TRACKS
+         DROP  4,5
+BUMPCCW  AHI   2,8                 COMPUTE ADDR OF NEXT READ CKD CCW
+         CR    2,3                 COMPARE ADDR W/ ADDR OF THE LAST CCW
+         JNH   NEXTCCW             BR IF WE READ THE CCW
+         CLI   EXCPECB,X'42'       TEST I/O COMPLETION
+         JE    CLOSEVTOC           BR IF VTOC ENTIRELY READ
+         L     4,0(,3)             LOAD ADDR OF THE LAST DSCB WE READ
+         N     4,=A(X'FFFFFF')     ISOLATE THE 24 BIT DSCB ADDRESS
+         MVC   EXCPIOB+35(5),COUNT-DSCB(4)  COPY CCHHR OF THE DSCB    ->
+                                             TO CONTINUE READING
+         J     NEXTGRP             GO READ THE NEXT GROUP OF DSCBS
+CLOSEVTOC CLOSE MF=(E,CPARM2)      CLOSE THE VTOC
+         MVC   DYNPARM(UL),U       COPY DYNALLOC PARM TO DYNPARM
+         MVC   (UDDN-U)+DYNPARM,(DCBDDNAM-IHADCB)+EXCPDCB  COPY DDNAME
+         LA    1,DYNPARM           LOAD ADDR OF THE PARMS
+         BRAS  14,DYNALLOC         FREE THE VOLUME
+         LTR   15,15               TEST THE RETURN CODE
+         JZ    DELF23              BR IF OK
+         DC    H'0'                OOPS
+DELF23   ICM   1,B'1111',F23LIST   LOAD ADDR OF THE NEXT F23 ELEMENT
+         JZ    FINDVOL             BR IF END OF LIST
+         MVC   F23LIST,F23NEXT-F23(1)  REMOVE THE ELEMENT FROM THE LIST
+         LHI   0,F23SIZE           LOAD THE SIZE
+         FREEMAIN RU,LV=(0),A=(1)  FREE THE F23 ELEMENT
+         J     DELF23              GO FREE THE NEXT ONE
+REPORT   LA    0,ANUM              LOAD NUMBER OF ATAB ENTRIES
+         LA    2,ATAB              LOAD ADDR OF FIRST ATAB ENTRY
+RPT0100  ICM   1,B'1111',0(2)      REMOVE THE AUSER ELEMENTS FROM ATAB
+         JZ    RPT0200               AND ADD THEM TO USERLIST
+         MVC   0(4,2),AUNEXT-AUSER(1)
+         MVC   AUNEXT-AUSER(,1),USERLIST
+         ST    1,USERLIST
+         J     RPT0100
+RPT0200  AHI   2,4
+         BRCT  0,RPT0100
+         L     15,=V(QSORTL)       LOAD ADDR OF QSORTL
+         CALL  (15),MF=(E,SORTPARM)  SORT USERLIST
+         LA    1,FMT05             LOAD ADDR OF A FORMAT
+         BRAS  14,FMTLINE          PRINT THE HEADER
+         LA    3,USERLIST-(AUNEXT-AUSER)  LOAD ADDR OF A DUMMY AUSER
+*        MVI   CC,C'1'
+         USING AUSER,3
+RPT0300  ICM   3,B'1111',AUNEXT    LOAD ADDR OF THE NEXT AUSER
+         JZ    RPT0500             BR IF ALL DONE
+* TRANSLATE AUCRDATE1 & AUCRDATE2 TO TIME MACRO FORMAT
+         LA    0,2
+         LA    1,AUCRDATE1
+RPT0400  SR    15,15
+         IC    15,0(,1)
+         MHI   15,1000
+         SR    14,14
+         ICM   14,B'0011',1(1)
+         AR    14,15
+         CVD   14,16(,13)
+         MVC   0(4,1),20(13)
+         AHI   1,AUCRDATE2-AUCRDATE1
+         BRCT  0,RPT0400
+         LA    1,FMT04             LOAD ADDR OF THE FORMAT
+         BRAS  14,FMTLINE          FORMAT THE AUSER
+*        MVI   CC,C' '
+         J     RPT0300             TRY AGAIN
+         DROP  3
+RPT0500  LA    1,FMT06             LIST
+         BRAS  14,FMTLINE           THE
+         LA    1,FMT07               STATISTICS
+         BRAS  14,FMTLINE
+EXIT     LA    1,CPARM1            LOAD ADDR OF A CLOSE PARM LIST
+         BRAS  14,CLOSELST         CLOSE SYSPRINT
+X0100    ICM   1,B'1111',USERLIST  LOAD ADDR OF THE NEXT AUSER
+         JZ    X0200               BR IF END OF LIST
+         MVC   USERLIST,AUNEXT-AUSER(1)  REMOVE THE AUSER FROM THE LIST
+         LHI   0,AUSIZE            LOAD THE SIZE OF AN AUSER
+         FREEMAIN RU,LV=(0),A=(1)  FREE THE AUSER
+         J     X0100               GO DO IT AGAIN
+X0200    L     13,4(,13)           LOAD ADDR OF THE PREVIOUS SAVE AREA
+         RETURN (14,12),T,RC=0     RESTORE REGS & RETURN
+         EJECT
+* ALLOCATE A VOLUME
+         CNOP  0,8
+DYNALLOC BASR  15,0                STORE CURRENT ADDR IN REG 15
+         SAVE  (14,7),,DYNALLOC    SAVE REGISTERS
+         LA    15,72(,13)          COMPUTE ADDR OF THE NEXT SAVE AREA
+         ST    13,4(,15)           ADD NEW SAVE AREA TO THE
+         ST    15,8(,13)            SAVE AREA CHAIN
+         LR    13,15               ESTABLISH NEW SAVE AREA POINTER
+         LR    2,1                 COPY PARM LIST ADDRESS TO REG 2
+         BRAS  14,DYNRELOC         RELOCATE THE ADDRESS CONSTANTS
+         DYNALLOC ,                ATTEMPT THE DYNAMIC ALLOCATION
+         LTR   3,15                TEST THE RETURN CODE
+         JZ    DYNA0300            BR IF RC = 0
+         ST    15,DYNRC            SAVE THE RETURN CODE
+         L     0,0(,2)             LOAD THE REQUEST BLOCK ADDRESS
+         ST    0,DFS99RBP          SAVE RB ADDR FOR DAIRFAIL
+         LINK  SF=(E,LINKDF),MF=(E,DFPARMS)  CALL DAIRFAIL
+         LTR   15,15               TEST DAIRFAIL RC
+         JZ    *+L'*+2             BR IF OK
+         DC    H'0'                OOPS
+         LHI   4,2                 LOAD NUMBER OG MESSAGE BUFFERS
+         LA    5,DFBUFS            LOAD ADDR OF FIRST MSG BUFFER
+DYNA0100 LH    6,0(,5)             LOAD MESSAGE LENGTH
+         AHI   6,-4                SUBTRACT LENGTH OF THE RDW
+         JNP   DYNA0200            BR IF NO MSG IN BUFFER
+         LA    1,FMT03             LOAD ADDR OF THE FORMAT
+         BRAS  14,FMTLINE          WRITE THE MESSAGE
+DYNA0200 AHI   5,DFBUF2-DFBUF1     COMPUTE ADDR OF THE NEXT MSG BUFFER
+         BRCT  4,DYNA0100          BR IF PRESENT
+DYNA0300 L     13,4(,13)           LOAD ADDR OF THE PREVIOUS SAVE AREA
+         LR    15,3                COPY DYNALLOC RC TO REG 15
+         RETURN (14,6),T,RC=(15)   RESTORE REGS & RETURN
+LINKDF   LINK  SF=L,EP=IKJEFF18    LINK TO DAIRFAIL
+         EJECT
+         CNOP  0,8
+* CALCULATE NUMBER OF TRACKS IN A GROUP OF EXTENT ENTRIES IN A
+* FORMAT 1 OR FORMAT 3 DSCB
+* REGISTER --
+*  6 -- NUMBER OF REMAINING EXTENTS IN THE DATA SET (MODIFIED)
+*  7 -- NUMBER OF EXTENTS IN GROUP (MODIFIED)
+*  8 -- ADDRESS OF FIRST EXTENT ENTRY (MODIFIED)
+* OUTPUT --
+* REGISTER --
+*  1 -- NUMBER OF TRACKS IN EXTENT GROUP
+* RETURN --
+*  REG 14 + 0 -- ALL EXTENTS IN DATA SET PROCESSED
+*  REG 14 + 4 -- MORE EXTENTS REMAAIN IN DATA SET
+XTNTSIZE BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,0),,XTNTSIZE    SAVE REGISTERS
+         SR    1,1                 INIT TOTAL TRACKS
+XTS0100  SR    15,15               SET EXTENT SIZE
+         OC    2(8,8),2(8)         TEST IF BOTH CCHH VALUES ARE 0
+         JZ    XTS0200             BR IF SO
+         LH    14,2(,8)            LOAD STARTING CC
+         MH    14,CYLSIZE          MULTIPLY STARTING CC BY TRKS / CYL
+         AH    14,4(,8)            ADD STARTING HH
+         LH    15,6(,8)            LOAD ENDING CC
+         MH    15,CYLSIZE          MULTIPLY CC BY TRKS / CYL
+         AH    15,8(,8)            ADD ENDING HH
+         SR    15,14               COMPUTE TRACKS IN EXTENT
+         JNM   *+L'*+2             BR IF EXTENT SIZE >= 0
+         DC    H'0'                OOPS
+         AHI   15,1                ADD 1 TO EXTENT SIZE
+XTS0200  AR    1,15                UPDATE
+         AHI   8,10                COMPUTE ADDR OF THE EXTENT ENTRY
+         BRCT  6,XTS0300           BR IF MORE EXTENTS IN THE DATA SET
+         J     XTS0400             ALL DATA SET EXTENTS PROCESSED
+XTS0300  BRCT  7,XTS0100           BR IF MORE EXTENTS IN THE GROUP
+         RETURN (14,0),T           RESTORE REGISTERS
+         ORG   *-2                 OVERLAY THE BR 14
+         B     4(,14)              RETURN TO +4
+XTS0400  RETURN (14,0),T           RESTORE REGS & RETURN TO +0
+         EJECT
+WA1      EQU   72-16               WORK AREA OFFSET IN SAVE AREA
+WA2      EQU   72-8                WORK AREA OFFSET IN SAVE AREA
+         CNOP  0,8
+ADDUSER  BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,3),,ADDUSER     SAVE REGISTERS
+         LR    3,1                 COPY USER ADDRESS TO REG 3
+         LR    0,1                 COPY START TO REG 0
+         AHI   1,8                 COMPUTE END OF USER
+         TRT   0(8,3),ADDUTAB      FIND THE END OF THE USER
+         SR    1,0                 COMPUTE THE LENGTH
+         JP    *+L'*+2             BR IF 1 TO 8
+         DC    H'0'                OOPS
+         LR    15,1                COPY THE LENGTH TO REG 15
+         LA    14,WA1+8(,13)       LOAD THE END OF WA1
+         XC    WA1(8,13),WA1(13)   SET WA1 TO 0S
+         SR    14,15               COMPUTE START OF RIGHT JUSTIFIED   ->
+                                    USERID
+         MVCL  14,0                COPY USERID TO WA1
+         PACK  WA2+1(5,13),WA1(9,13)  COMPACT THE USERID
+         ICM   1,B'1111',WA2+1(13) LOAD THE COMPACTED USERID
+         SR    0,0                 SET REG 0 = 0
+         D     0,=A(ANUM)          DIVIDE COMPACTED USERID BY NUMBER  ->
+                                    OF ENTRIES IN ATAB
+         LR    2,0                 COPY REMAINDER TO REG 2
+         SLL   2,2                 MULTIPLY REMAINDER BY 4
+         LA    2,ATAB(2)           COMPUTE ADDR OF ATAB ENTRY WE'LL USE
+         LR    1,2                 COPY ADDRESS TO REG 1
+ADDU0100 ICM   1,B'1111',AUNEXT-AUSER(1)  LOAD ADDR OF THE NEXT AUSER
+         JZ    ADDU0200            BR IF END OF LIST
+         CLC   AUUSER-AUSER(,1),0(3)  TEST IF MATCH
+         JNE   ADDU0100            BR IF NOT
+         J     ADDU0300            BR IF MATCH
+ADDU0200 LHI   0,AUSIZE            LOAD THE SIZE OF THE USER
+         GETMAIN RU,LV=(0),LOC=(31,ANY)  ALLOCATE STORAGE
+         LHI   0,1                 SET REG 0
+         A     0,HLQCOUNT          UPDATE HLQCOUNT
+         ST    0,HLQCOUNT
+         XC    0(AUSIZE,1),0(1)    CLEAR STORAGE
+         MVC   AUUSER-AUSER(,1),0(3)  COPY USERID
+         MVC   AUNEXT-AUSER(,1),0(2)  ADD THE AUSER TO THE ALIAS CHAIN
+         ST    1,0(,2)             ADD NEW USER TO THE ALIAS CHAIN
+ADDU0300 ST    1,24(,13)
+         RETURN (14,3),T           RESTORE REGS & RETURN
+         DC    0D'0'
+ADDUTAB  DC    0XL256'0',(C' ')X'00',X'04',(C'.'-(*-ADDUTAB))X'00',X'08>
+               ',(256-(*-ADDUTAB))X'00'
+         EJECT
+         CNOP  0,8
+TESTDD   BASR  15,0                STORE CURRENT ADDR IN REG 16
+         SAVE  (14,3),,TESTDD      SAVE REGISTERS
+         LR    2,1                 COPY OPEN PARM LIST ADDR TO REG 2
+         SR    3,3                 SET THE RETURN CODE
+TDD0100  L     1,0(,2)             LOAD A DCB ADDRESS
+         N     1,=A(X'FFFFFF')     ISOLATE THE 24-BIT DCB ADDRESS
+         DEVTYPE DCBDDNAM-IHADCB(,1),64(,13)  TEST IF DD PRESENT
+         LTR   15,15               TEST DEVTYPE RETURN CODE
+         JZ    TDD0200             BR IF RC = 0
+         LHI   3,4                 RESET MY RETURN CODE
+TDD0200  TM    0(2),X'80'          TEST IF END OF THE OPEN PARM LIST
+         LA    2,4(,2)             COMPUTE ADDR OF NEXT DCB POINTER
+         JZ    TDD0100             BR IF NOT END OF THE OPEN PARM LIST
+         LR    15,3                COPY MY RETURN CODE TO REG 15
+         RETURN (14,3),T,RC=(15)   RESTORE REGS & RETURN
+         EJECT
+         CNOP  0,8
+OPENLIST BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,2),,OPENLIST    SAVE REGISTERS
+         LR    2,1                 COPY PARM LIST ADDR TO REG 2
+         OPEN  MF=(E,(2))          OPEN THE DCBS
+         SR    15,15               SET PRELIMINARY RETURN CODE
+OL0100   L     1,0(,2)             LOAD A DCB ADDRESS
+         N     1,=A(X'FFFFFF')     ISOLATE THE 24-BIT DCB ADDRESS
+         TM    DCBOFLGS-IHADCB(1),DCBOFOPN  TEST IF THE DCB IS OPEN
+         JO    *+8                 BR IF SO
+         LHI   15,4                RESET THE RETURN CODE
+         TM    0(2),X'80'          TEST IF END OF THE PARM LIST
+         LA    2,4(,2)             COMPUTE ADDR OF THE NEXT DCB POINTER
+         JZ    OL0100              BR IF NOT END OF PARM LIST
+         RETURN (14,2),T,RC=(15)   RESTORE REGS & RETURN
+         EJECT
+         CNOP  0,8
+CLOSELST BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,2),,CLOSELST    SAVE REGISTERS
+         LR    2,1                 COPY PARM LIST ADDR TO REG 2
+         CLOSE MF=(E,(1))          CLOSE THE DCBS
+CL0100   L     1,0(,2)             LOAD A DCB ADDR FROM THE PARM LIST
+         N     1,=A(X'FFFFFF')     ISOLATE THE 24-BIT DCB ADDRESS
+         TM    DCBOFLGS-IHADCB(1),DCBOFOPN  TEST IF THE DCB IS OPEN
+         JO    CL0200              BR IF SO
+         TM    (DCBBUFCB-IHADCB)+3(1),1  TEST IF THERE IS A BUFFER POOL
+         JO    CL0200              BR IF NOT
+         FREEPOOL (1)              FREE THE BUFFER POOL
+CL0200   TM    0(2),X'80'          TEST IF END OF THE PARM LIST
+         LA    2,4(,2)             COMPUTE ADDR OF NEXT DCB POINTER
+         JZ    CL0100              BR IF NOT END OF THE PARM LIST
+         RETURN (14,2),T           RESTORE REGS & RETURN
+         EJECT
+         CNOP  0,8
+FMTLINE  BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  14,,FMTLINE         SAVE REG 15
+         LA    15,72(,13)          COMPUTE ADDR OF THE NEXT SAVE AREA
+         ST    15,8(,13)           ADD NEW SAVE AREA TO THE
+         ST    13,4(,15)            SAVE AREA CHAIN
+         LR    13,15               ESTABLISH NEW SAVE AREA POINTER
+         LA    0,FMTWORK           LOAD ADDR OF THE MINIFMT WORK AREA
+         L     15,=V(MINIFMT)      LOAD ADDR OF MINIFMT
+         CALL  (15)                FORMAT THE LINE
+         BRAS  14,OUTEDIT          WRITE THE FORMATTED LINE
+         L     13,4(,13)           LOAD ADDR OF THE PREVIOUS SAVE AREA
+         RETURN 14,T               RESTORE REG 14 & RETURN
+         EJECT
+         CNOP  0,8
+OUTEDIT  BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,4),,OUTEDIT     SAVE REGISTERS
+         LR    2,1                 COPY LINE ADDRESS TO REG 2
+         SR    3,3                 SET REG 3 = 0
+         SR    4,4                 SET REG 4 = 0
+         LA    15,72(,13)          COMPUTE ADDR OF THE NEXT SAVE AREA
+         ST    15,8(,13)           ADD NEW SAVE AREA TO THE
+         ST    13,4(,15)            SAVE AREA CHAIN
+         LR    13,15               ESTABLISH NEW SAVE AREA POINTER
+         IC    3,4(,1)             LOAD CARRIAGE CONTROL CHARACTER
+         IC    4,OELINES(3)        LOAD LINES THIS LINE WILL PRINT
+         AH    4,LINECT            ADD CURRENT PAGE POSITION
+         CHI   4,60                COMPARE NEW PAGE POSITION WITH     ->
+                                    MAX LINES ON A PAGE
+         JNH   OE0100              BR IF NEW LINE WILL FIT ON THE     ->
+                                    CURRENT PAGE
+         AP    PAGENUM,=P'1'       ADD 1 TO THE PAGE NUMBER
+         MVC   PAGE#,=X'402020202120'  CONVERT PAGE NUMBER TO DIGITS
+         ED    PAGE#,PAGENUM
+         PUT   PRINT,PAGEHDR       WRITE THE PAGE HEADER
+         MVI   4(2),C'0'           REPLACE ORIGINAL CARRIAGE CONTROL
+         LHI   4,3                 SET NEW PAGE POSITION
+OE0100   PUT   PRINT,(2)           WRITE THE LINE
+         STH   4,LINECT            UPDATE THE PAGE POSITION
+         STC   3,4(,2)             RESTORE ORIGINAL VARRIAGE CONTROL
+         L     13,4(,13)           LOAD ADDR OF THE PREVIOUS SAVE AREA
+         RETURN (14,4),T           RESTORE REGISTERS & RETURN
+         EJECT
+***********************************************************************
+*                                                                     *
+* Title -- DYNRELOC                                                   *
+*                                                                     *
+* Function / Operation -- Translate address offsets in a coded        *
+*   dynamic allocation parameter list to true addresses               *
+*                                                                     *
+* Status / Change Level --                                            *
+*           March 2012                                                *
+*    - Change comment.  The IEFZB4D2 macro name in a comment was      *
+*      incorrectly specified as IEFAB4D2.  The change level was not   *
+*      altered since the only change was in a comment and in this     *
+*      change log.                                                    *
+*    - Added comment about attributes.                                *
+*   V3L0 -- April 2010                                                *
+*                                                                     *
+* Example Calling Sequence --                                         *
+*   ----+----1----+----2----+----3----+----4----+----5----+----6      *
+*            LA    1,DYNPARMS                                         *
+*            BRAS  14,DYNRELOC                                        *
+*            ...                                                      *
+*   DYNPARMS DC    A(X'80000000'+(RB-DYNPARMS))                       *
+*   RB       DC    AL1(S99RBEND-S99RB,S99VRBAL,0,0),2AL2(0)           *
+*            DC    A(TUP001-DYNPARMS)                                 *
+*            DC    2A(0)                                              *
+*   TUP001   DC    A(TU001-DYNPARMS)                                  *
+*            DC    A(TU002-DYNPARMS)                                  *
+*            DC    A(TU003-DYNPARMS)                                  *
+*            DC    A(X'800000000'+(TU004-DYNPARMS))                   *
+*   TU001    DC    AL2(DALDSNAM,1,L'DSN)                              *
+*   DSN      DC    C'SYS1.MACLIB'                                     *
+*   TU002    DC    AL2(DALSTATS,1,1),AL1(8)                           *
+*   TU003    DC    AL2(DALRTORG,1,2),AL2(0)                           *
+*   TU004    DC    AL2(DALRTDDN,1,8),CL8' '                           *
+*                                                                     *
+* Attributes -- DYNRELOC is reenterable, refreshable and reusable.    *
+*   It operates in TCB mode, in problem key and problem state.  It    *
+*   operates in AMODE 24 or 31 that is consistent with the location   *
+*   of the code, the register save area, and the dynamic allocation   *
+*   parameter list.  It uses no external operating system resources.  *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         DC    0D'0'
+         PUSH  USING
+         DROP  ,                   KILL ANY CURRENT USING
+DYNRELOC BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,12                ESTABLISH ADDRESSABILITY
+         SAVE  (14,12),,DYNRELOC   SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LR    2,1                 COPY ADDRESS OF THE RB POINTER TO  ->
+                                    REG 2
+         L     3,0(,1)             LOAD OFFSET OF THE REQUEST BLOCK
+         ALR   3,2                 COMPUTE THE REQUEST BLOCK ADDRESS
+         ST    3,0(,1)             STORE THE REQUEST BLOCK ADDRESS
+         USING S99RB,3             ESTABLISH S99RB ADDRESSABILITY
+         L     4,S99TXTPP          LOAD OFFSET OF THE FIRST TEXT      ->
+                                    UNIT POINTER
+         ALR   4,2                 COMPUTE ADDRESS OF THE TEXT UNIT   ->
+                                    POINTER
+         ST    4,S99TXTPP          STORE ITS ADDRESS IN THE S99RB
+DYNR0100 L     15,0(,4)            LOAD OFFSET OF A TEXT UNIT POINTER
+         LR    14,15               COPY OFFSET TO REG 14
+         N     14,DYNR0300         REMOVE THE VL BIT
+         JZ    DYNR0200            BR IF NO POINTER IN THE POSITION
+         ALR   15,2                COMPUTE ADDRESS OF THE TEXT UNIT
+         ST    15,0(,4)            STORE TEXT UNIT ADDRESS IN THE     ->
+                                    TEXT UNIT POINTER
+DYNR0200 TM    0(4),X'80'          TEST IF LAST TEXT UNIT POINTER
+         LA    4,4(,4)             COMPUTE ADDRESS OF THE NEXT TEXT   ->
+                                    UNIT POINTER
+         JZ    DYNR0100            BR IF NOT THE LAST TEXT UNIT POINTER
+         RETURN (14,12),T          RESTORE REGISTERS & RETURN TO CALLER
+DYNR0300 DC    A(X'7FFFFFFF')      MASK TO REMOVE THE VL BIT
+         POP   USING               RESTORE PREVIOUS USING
+*        IEFZB4D0 ,
+*        IEFZB4D2 ,
+         EJECT
+* QSORTL COMPARE FUNCTION
+L        USING AUSER,14
+R        USING AUSER,1
+         CNOP  0,8
+SORTCOMP SAVE  14                  SAVE REG 14
+         LM    14,15,0(1)          LOAD PARAMETER LIST INTO REGS 14&15
+         L     14,0(,14)           LOAD ADDR OF AN AUSER
+         L     1,0(,15)            LOAD ADDR OF THE OTHER AUSER
+         LHI   15,1                LOAD THE PRELIMINARY RETURN CODE
+         L     0,R.AUALLOC         LOAD TRACKS ALLOCATED
+         C     0,L.AUALLOC         COMPARE
+         JL    SC0200
+         JH    SC0300
+         L     0,R.AUCOUNT         LOAD DATA SET COUNT
+         C     0,L.AUCOUNT         COMPARE
+         JL    SC0200
+         JH    SC0300
+         CLC   L.AUUSER,R.AUUSER   COMPARE HIGH LEVEL QUALIFIERS
+         JL    SC0200
+         JH    SC0300
+SC0100   SR    15,15               ALL EQUAL, SET RC = 0
+         J     SC0300
+SC0200   LNR   15,15               "LEFT" VALUE LOW, SET RC = -1
+SC0300   RETURN 14,RC=(15)         RESTORE REG 14 & RETURN
+         DROP  L,R
+         EJECT
+DASDDATA CSECT
+OELINES  DC    0XL256'0',256X'FF'
+         ORG   OELINES+C' '
+         DC    AL1(1)
+         ORG   OELINES+C'-'
+         DC    AL1(3)
+         ORG   OELINES+C'0'
+         DC    AL1(2)
+         ORG   ,
+SAVEAREA DC    (5*9)D'0'           5 72 BYTE OS/360 SAVE AREAS
+FMTWORK  DC    XL200'0'            MINIFMT WORK AREA
+DYNPARM  DC    XL256'0'
+UCBSUCB  DC    XL48'0'
+UCBSWORK DC    XL100'0'
+CYLSIZE  DC    H'0'                TRACKS / CYLINDER
+LINECT   DC    H'255',0F'0'
+         PUSH  PRINT
+         PRINT NOGEN
+         IKJEFFDF DFDSECT=NO,DFDSEC2=NO
+         ORG   DFPARMS
+         DC    A(*-*,DYNRC,FF02ADDR,DYNCODES,0,DFBUFS)
+         ORG   ,
+         UCBSCAN MF=(L,UCBSPARM)   UCBSCAN SERVICE PARAMETER LIST
+DYNRC    DC    F'0'
+SEXCPS   DC    F'0'
+F3EXCPS  DC    F'0'
+VOLS     DC    F'0'
+HLQCOUNT DC    F'0'
+SAVER1A  DC    F'0'                                             SBG
+SAVER1T3 DC    3F'0'                                            SBG
+FF02ADDR DC    A(0)
+DYNCODES DC    AL1(DFBUFSW,DFSVC99)
+OPARM1   OPEN  (PRINT,OUTPUT),MF=L
+CPARM1   CLOSE PRINT,MF=L
+OPARM2   OPEN  (EXCPDCB,INPUT),MF=L
+CPARM2   CLOSE EXCPDCB,MF=L
+PRINT    DCB   DSORG=PS,MACRF=PM,DDNAME=SYSPRINT,RECFM=VBA,LRECL=125
+EXCPDCB  DCB   MACRF=E,DDNAME=FILLMEIN,EXLST=XLIST
+XLIST    DC    0A(0),AL1(X'80'+7),AL3(JFCB)
+JFCB     DC    0XL176'0'
+         IEFJFCBN ,
+         POP   PRINT
+         DC    0D'0'
+EXCPIOB  DC    0XL40'0',AL1(X'42',0,0,0),A(EXCPECB,0,0,READBLK,EXCPDCB,>
+               0,0),XL8'0'
+F3IOB    DC    0XL40'0',AL1(X'42',0,0,0),A(F3ECB,0,0,F3CCWS,EXCPDCB,0,0>
+               ),XL8'0'
+F3CCWS   CCW   X'31',F3IOB+35,X'40',5
+         CCW   X'08',F3CCWS,0,0
+         CCW   X'0E',F3DSCB+L'COUNT,0,DSCBSIZE-L'COUNT
+EXCPECB  DC    F'0'
+F3ECB    DC    F'0'
+F3DSCB   DC    XL(DSCBSIZE)'0',0F' 0'
+USERLIST DC    A(*-*)
+F23LIST  DC    A(*-*)
+DSSIZE   DC    F'0'
+DSCOUNT  DC    F'0'
+SORTPARM CALL  ,(USERLIST,SORTOFF,SORTCOMP),MF=L
+SORTOFF  DC    A(AUNEXT-AUSER)
+         DC    0D'0'
+         LTORG ,
+DSOTAB   DC    AL1(DCBDSGPS,0)
+         DC    AL1(DCBDSGPO,0)
+DSOTABE  DC    AL1(DCBDSGDA,0)
+LEFT     EQU   ((120-L'HDR)/2)+1
+RIGHT    EQU   111-LEFT-L'HDR
+PAGEHDR  DC    AL2(PAGEHDRL,0)
+         DC    CL(LEFT)'1(DASDSUM  V1L0 &SYSDATE &SYSTIME)'
+HDR      DC    C'L I S T   D A S D   U S A G E   B Y   H L Q'
+         DC    CL(RIGHT)' ',C'PAGE'
+PAGE#    DC    C' NNNNN'
+PAGEHDRL EQU   *-PAGEHDR
+PAGENUM  DC    P'00000'
+         SPACE 1
+FMT01    DC    AL.2(3),AL.6(4),AL1(1,1),X'FF'
+         SPACE 1
+FMT02    DC    AL1(1),C' '
+         DC    AL.2(2),AL.6(4),AL1(0,3)  HH:MM:SS
+         DC    AL1(L'FMT02B)
+FMT02B   DC    C' SCANNING VOLUME '
+         DC    AL.2(3),AL.6(0),AL1(L'AVOL,0),SL2((AVOL-A)+DYNPARM)
+         DC    AL1(4),C' ON '
+         DC    AL.2(3),AL.6(2),AL1(L'UCBCHAN,0),SL2((UCBCHAN-UCBOB)+UCB>
+               SUCB),X'FF'
+         SPACE 1
+FMT03    DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(3),AL1(0,0),SL2(44+3(13)) REG 6
+         DC    AL.2(3),AL.6(0),AL1(0,0),SL2(4(5)),X'FF'
+         SPACE 1
+*   HLQ    DATA SETS  ALLOCATED  USED
+* CCCCCCCC    NNNN      NNNNNN  NNNNN
+*         ----+---            ----+--
+*                 ----+----1--
+         USING AUSER,3
+*FMT04    DC    AL.2(3),AL.6(0),AL1(L'CC,L'CC),SL2(CC-FMT04(1))
+FMT04    DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(0),AL1(L'AUUSER,L'AUUSER),SL2(AUUSER)
+         DC    AL.2(3),AL.6(1),AL1(L'AUCOUNT,8),SL2(AUCOUNT)
+         DC    AL.2(3),AL.6(1),AL1(L'AUALLOC,12),SL2(AUALLOC)
+         DC    AL.2(3),AL.6(1),AL1(L'AUUSED,7),SL2(AUUSED)
+         DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(5),AL1(1,0),SL2(AUCRDATE1-4)
+         DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(5),AL1(1,0),SL2(AUCRDATE2-4)
+         DC    AL.2(3),AL.6(1),AL1(L'AUMAXTRK,7),SL2(AUMAXTRK)
+         DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(0),AL1(L'AUMAXDS,0),SL2(AUMAXDS),X'FF'
+         DROP  3
+CC       DC    C' '
+         SPACE 1
+FMT05    DC    AL1(L'FMT05A)
+FMT05A   DC    C'1  HLQ    DATA SETS  ALLOCATED  USED',X'FF'
+         SPACE 1
+FMT06    DC    AL1(L'FMT06A)
+FMT06A   DC    C'0SCANNED '
+         DC    AL.2(3),AL.6(1),AL1(L'VOLS,0),SL2(VOLS)
+         DC    AL1(L'FMT06B)
+FMT06B   DC    C' VOLUMES USING '
+         DC    AL.2(3),AL.6(1),AL1(L'SEXCPS,0),SL2(SEXCPS)
+         DC    AL1(L'FMT06C)
+FMT06C   DC    C' SEQUENTIAL EXCPS AND '
+         DC    AL.2(3),AL.6(1),AL1(L'F3EXCPS,0),SL2(F3EXCPS)
+         DC    AL1(L'FMT06D)
+FMT06D   DC    C' SINGLE RECORD EXCPS',X'FF'
+         SPACE 1
+FMT07    DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(1),AL1(L'HLQCOUNT,0),SL2(HLQCOUNT)
+         DC    AL1(L'FMT07B)
+FMT07B   DC    C' HIGH LEVEL QUALIFIERS, '
+         DC    AL.2(3),AL.6(1),AL1(L'DSCOUNT,0),SL2(DSCOUNT)
+         DC    AL1(L'FMT07C)
+FMT07C   DC    C' DATA SETS',X'FF'
+         SPACE 1
+A        DC    A(X'80000000'+(ARB-A))
+ARB      DC    AL1(S99RBEND-S99RB,S99VRBAL)
+         DC    AL1(S99NOMNT,0)
+         DC    2AL2(0)
+         DC    A(ATXTPP-A,0,0)
+ATXTPP   DC    A(ATXT01-A,ATXT02-A,ATXT03-A)
+         DC    A(X'80000000'+(ATXT04-A))
+ATXT01   DC    AL2(DALUNIT,1,L'AUNIT)
+AUNIT    DC    C'SYSALLDA'
+ATXT02   DC    AL2(DALVLSER,1,L'AVOL)
+AVOL     DC    CL6' '
+ATXT03   DC    AL2(DALRTDDN,1,L'ADDN)
+ADDN     DC    CL8' '
+ATXT04   DC    AL2(DALSTATS,1,1),X'08'
+AL       EQU   *-A
+U        DC    A(X'80000000'+(URB-U))
+URB      DC    AL1(S99RBEND-S99RB,S99VRBUN,0,0)
+         DC    2AL2(0)
+         DC    A(UTXTPP-U,0,0)
+UTXTPP   DC    A(X'80000000'+(UTXT01-U))
+UTXT01   DC    AL2(DUNDDNAM,1,L'UDDN)
+UDDN     DC    CL8' '
+UL       EQU   *-U
+         DC    0D'0'
+* ATAB IS THE LAST ADDRESSABLE DATA AREA; THE DATA IN ATAB IS
+* LOCATED USING INDEXES, THE CCWS IN READBLK ARE LOCATED FROM EXCPIOB,
+* AND THE DSCBS IN IOBUF ARE LOCATED USING THE CCWS IN READBLK.
+ATAB     DC    511A(*-*)
+ANUM     EQU   (*-ATAB)/L'ATAB
+         DC    0D'0'
+READBLK  GENCCWS 160,EXCPIOB,IOBUF
+IOBUF    DS    160XL(DSCBSIZE)
+         DS    0D
+         END   DASDSUM

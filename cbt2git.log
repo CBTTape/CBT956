@@ -1,0 +1,25 @@
+2023-08-06 08:41:01.319400 - Initialized conversion of CBT956
+2023-08-06 08:41:01.529524 - Received CBT.V505.FILE956.PDS from FILE956.XMI 
+2023-08-06 08:41:01.531638 - Found $$$#DATE.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/$$$#DATE
+2023-08-06 08:41:01.532998 - Found $DOC.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/$DOC
+2023-08-06 08:41:01.534019 - Found @FILE956.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/@FILE956
+2023-08-06 08:41:01.534940 - Found DASDSUM.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/DASDSUM
+2023-08-06 08:41:01.535998 - Found DASDSUM$.jcl (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/DASDSUM$
+2023-08-06 08:41:01.537022 - Found DASDSU01.jcl (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/DASDSU01
+2023-08-06 08:41:01.538100 - Found DISKLST.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/DISKLST
+2023-08-06 08:41:01.539076 - Found DISKLST$.jcl (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/DISKLST$
+2023-08-06 08:41:01.540011 - Found DISKLST1.jcl (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/DISKLST1
+2023-08-06 08:41:01.541004 - Found DSREF.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/DSREF
+2023-08-06 08:41:01.541994 - Found DSREF$.jcl (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/DSREF$
+2023-08-06 08:41:01.543008 - Found ICOPY.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/ICOPY
+2023-08-06 08:41:01.543906 - Found ICOPY$.jcl (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/ICOPY$
+2023-08-06 08:41:01.544792 - Found ICOPY@.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/ICOPY@
+2023-08-06 08:41:01.545735 - Found ICOPYJ1.jcl (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/ICOPYJ1
+2023-08-06 08:41:01.546636 - Found ICOPYJ1O.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/ICOPYJ1O
+2023-08-06 08:41:01.547516 - Found INSTALL.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/INSTALL
+2023-08-06 08:41:01.548847 - Found LJUST.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/LJUST
+2023-08-06 08:41:01.555293 - Found LOADMOD.xmi (application/xmit) in CBT.V505.FILE956.PDS
+2023-08-06 08:41:01.562885   - Received RECFM=U data, stored XMIT file as CBT956/LOADMOD.xmi
+2023-08-06 08:41:01.564096 - Found MINIFMT.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/MINIFMT
+2023-08-06 08:41:01.565102 - Found QSORTS.txt (text/plain) in CBT.V505.FILE956.PDS, moved to PDS/QSORTS
+2023-08-06 08:41:01.565113 - Found SCAN118.x-mp4a-latm containing audio/x-mp4a-latm, moved to PDS/SCAN118
