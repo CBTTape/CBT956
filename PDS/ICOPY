@@ -1,0 +1,668 @@
+ICOPY    TITLE '                         S I M P L E   I M A G E   C O >
+               P Y   U T I L I T Y'
+***********************************************************************
+*                                                                     *
+* Title -- ICOPY                                                      *
+*                                                                     *
+* Function / Operation -- ICOPY is a simple image copy utility.  It   *
+*   copies the track images of a source data set to an output data    *
+*   set.  It arranges the output data set so that its DSORG, RECFM,   *
+*   LRECL and BLKSIZE are the same as to source data set.  It         *
+*   copies the DS1LSTAR and DS1TRBAL from the source data set to      *
+*   the output data set.  This utility is not production capable.     *
+*   It does not perform these tasks --                                *
+*   - It does not verify the input and output devices are similar     *
+*     . For this reason, it should be possible to perform an "up      *
+*       guage" copy; that is something like a 3380 to 3390 copy.      *
+*       This feature has not been tested, and there is a very good    *
+*       chance that updates to the output data set may not be         *
+*       possible.                                                     *
+*   - It does not verify the input and output devices are DASD.       *
+*   - It will not obtain additional extents if the output data set    *
+*     becomes full.                                                   *
+*   - It abnormally terminates if the output data set is smaller      *
+*     than the input data set, and the logical end of data has not    *
+*     been encountered.                                               *
+*   - It abnormally terminates if any I/O error is detected.          *
+*   - The track buffer is part of the program.                        *
+*   - It is not known what will happen if an "empty" track (a track   *
+*     with just a home address and R0) is encountered.  According to  *
+*     the manual (3990/9390 Reference) the Read Multiple Count-Key-   *
+*     Data command terminates normally without transferring any data. *
+*     ICOPY tests for this condition, but it is not known if the test *
+*     will actually work, and ICOPY's response is not really correct. *
+*     ICOPY is not authorized to perform a Write R0 command, which is *
+*     the "correct" response to this condition, but the current       *
+*     response, skip the write to the track, is not really correct.   *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L3 -- May 2017                                                  *
+*    - Use of the external OUTEDIT function eliminated.               *
+*    - Add internal OUTEDIT function to replace use of OWRITE         *
+*      external function.                                             *
+*    - Add an internal page header to replace use of OGETTOP in       *
+*      external OUTEDIT function.  This page header incorporates text *
+*      to identify the date & time ICOPY was assembled and the date   *
+*      time it was run.                                               *
+*    - All use of the MICROFMT function eliminated and replaced by a  *
+*      use of MINIFMT.                                                *
+*    - The MICROFMT function has been eliminated.                     *
+*    - ICOPY will detect the output data set is smaller than the      *
+*      input data set and iss an appropriate message.  If the         *
+*      DS1LSTAR of the input data set is less than or equal to the    *
+*      number of tracks in the output data set, ICOPY will perform    *
+*      the copy.                                                      *
+*    - Most ABENDs removed.                                           *
+*    - Message descriptions updated.                                  *
+*    - Y2K statement added.                                           *
+*   V1L2 -- July 2010                                                 *
+*    - Correct a "bug" in MICROFMT                                    *
+*    - Remove the date and time in the ID for the SAVE macro in       *
+*      MICROFMT                                                       *
+*    - Update V1L1 to V1L2                                            *
+*   V1L1 -- May 2010                                                  *
+*    - MICROFMT added as an internal function                         *
+*    - Message generation performed using MICROFMT                    *
+*   V1L0 -- April 2010                                                *
+*                                                                     *
+* JCL --                                                              *
+*   //stpname EXEC PGM=ICOPY                                          *
+*   //INPUT    DD  -- Input data set definition --                    *
+*   //OUTPUT   DD  -- Output data set definition --                   *
+*                                                                     *
+* Y2K -- ICOPY is Y2K compliant.  The assembly date in the page       *
+*   header is only Y2K compatible.                                    *
+*                                                                     *
+* Messages --                                                         *
+*                                                                     *
+*  ICOPY - UNABLE TO OPEN SYSPRINT                                    *
+*    Reason -- ICOPY was unable to open the data set specified by a   *
+*     DD statement with DD name SYSPRINT.  This message is sent to    *
+*     operator.                                                       *
+*    Action -- ICOPY terminates.                                      *
+*    Response -- The most common reason for this error to occur is    *
+*     there is no DD statement with DD name SYSPRINT in the JCL used  *
+*     to run ICOPY.  Add the appropriate DD statement to the JCL      *
+*     used to run ICOPY and rerun the job.                            *
+*  UNABLE TO OBTAIN DATA SET ATTRIBUTES                               *
+*    Reason -- ICOPY was unable to obtain data set attributes.        *
+*    Action -- ICOPY terminates.                                      *
+*    Response -- The most likely reason is the DD statements with DD  *
+*     names INPUT or OUTPUT are not specified or do not point to disk *
+*     volumes.  Update the JCL used to run ICOPY to correct these     *
+*     problems and rerun the job.                                     *
+*  UNABLE TO OPEN DDNAME xxxxxxxx                                     *
+*    Reason -- ICOPY was unable to open the data set specified in the *
+*              message.                                               *
+*    Action -- ICOPY terminates.                                      *
+*    Response -- Update the JCL used to run ICOPY and rerun ICOPY.    *
+*  INPUT I/O ERROR READING RELATIVE TRACK tttt AT cccchhhh            *
+*    Reason -- ICOPY encountered an I/O error reading the track       *
+*     specified in the message. tttt is the hexadecimal relative      *
+*     track in the data set, cccchhhh is the track address, where     *
+*     cccc is the cylinder and hhhh is the track in the cylinder.     *
+*    Action -- ICOPY terminates.                                      *
+*    Response -- If the copy completed without an ABEND, no response  *
+*     is required.  If ICOPY abnormally terminated, the output data   *
+*     set is not usable.                                              *
+*  EMPTY TRACK DETECTED AT RELATIVE TRACK tttt AT cccchhhh            *
+*    Reason -- ICOPY detected an empty track in the input data set.   *
+*    Action -- ICOPY terminates with user ABEND code 4 if the empty   *
+*              track is in the used portion of the input data set,    *
+*              or it terminates normally.                             *
+*    Response -- If ICOPY terminated normally, no response is         *
+*              required.  If ICOPY abnormally terminated, the output  *
+*              data set is not usable.                                *
+*  OUTPUT I/O ERROR WRITING RELATIVE TRACK tttt AT cccchhhh           *
+*    Reason -- ICOPY determined that there was an I/O error writing   *
+*              the track                                              *
+*    Action -- ICOPY terminates with user ABEND code 5.               *
+*    Response -- If there is no obvious reason for this error, it     *
+*              may indicate an error in ICOPY.                        *
+*  dsn COPIED TO dsn                                                  *
+*    Reason -- ICOPY copied the data set specified by the DD          *
+*              statement with dd name INPUT to the output data set    *
+*              specified by dd name OUTPUT.                           *
+*    Action -- ICOPY terminates normally.                             *
+*    Response -- None required.                                       *
+*                                                                     *
+*  THE INPUT DATA SET IS LARGER THAN THE OUTPUT DATA SET              *
+*  ICOPY WILL COPY THE DATA SET AS THE USED TRACKS OF THE INPUT DATA  *
+*  SET WILL FIT INTO THE OUTPUT DATA SET                              *
+*    Reason -- ICOPY determined that the output data set is larger    *
+*     than the output data set.                                       *
+*    Action -- ICOPY attempts to copy the input data set to the       *
+*     output data set if the used tracks in the input data set will   *
+*     fit into the output data set.  ICOPY does not attempt to add    *
+*     additional tracks to the output data set.                       *
+*    Response -- None required.                                       *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+ICOPY    CSECT                     DEFINE THE PROGRAM CSECT
+         PUSH  PRINT
+         PRINT NOGEN
+F1DSCB   DSECT                     DEFINE DSECT FOR THE FORMAT 1 DSCB
+         IECSDSL1 1                DEFINE SYMBOLS FOR THE FMT 1 DSCB
+         DCBD  DSORG=QS,DEVD=DA    DEFINE DCB SYMBOLS
+JFCB     DSECT
+         IEFJFCBN
+         IEZDEB ,                  DEFINE DEB SYMBOLS
+         CVT   DSECT=YES           DEFINE CVT SYMBOLS
+         POP   PRINT
+ICOPY    CSECT                     RETURN TO THE PROGRAM CSECT
+         USING *,12                ESTABLISH PROGRAM ADDRESSABILITY
+IDCB     USING IHADCB,INPUT        ESTABLISH INPUT DCB ADDRESSABILITY
+ODCB     USING IHADCB,OUTPUT       ESTABLISH OUTPUT DCB ADDRESSABILITY
+MDCB     USING IHADCB,MODDCB       ESTABLISH OUTPUT DCB ADDRESSABILITY
+         SAVE  (14,12),,ICOPY-&SYSDATE-&SYSTIME  SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LA    15,S                LOAD ADDRESS OF THE NEW SAVE AREA
+         ST    15,8(,13)           ADD THE NEW SAVE AREA TO THE
+         ST    13,4(,15)            TASK'S SAVE AREA CHAIN
+         LR    13,15               ESTABLISH THE NEW SAVE AREA POINTER
+         OPEN  MF=(E,OPENPR)
+         LTR   15,15
+         BZ    PROPEN
+         L     1,=A(MSG011)
+         WTO   MF=(E,(1))
+         MVI   RC,16
+         B     EXIT
+PROPEN   BAS   14,INITHDR
+*        LA    0,OHANDLE           LOAD ADDRESS OF THE OUTPUT HANDLE
+*        LA    1,=CL8'SYSPRINT'    LOAD ADDRESS OF DDNAME TO OPEN
+*        L     15,=V(OOPEN)        LOAD ADDRESS OF OOPEN
+*        CALL  (15)                OPEN SYSPRINT
+*        LTR   15,15               TEST RETURN CODE FROM OOPEN
+*        JZ    SETHDR              BR IF THE OPEN IS OK
+*        DC    H'0'                ABEND IF THE OPEN FAILED
+*SETHDR   LA    0,OHANDLE          LOAD ADDRESS OF THE OUTPUT HANDLE
+*        L     15,=V(OGETTOP)      LOAD ADDRESS OF ROUTINE TO RETRIEVE >
+                                    THE ADDRESS OF THE PAGE HEADER
+*        CALL  (15)                GET ADDRESS OF THE PAGE HEADER
+*                         ----+----1
+*        MVC   5(10,1),=C'ICOPY V1L2'  INSERT MY ID INTO THE PAGE HDR
+         RDJFCB MF=(E,OPARM)       READ THE JFCB OF THE INPUT DATA SET
+         LTR   15,15               TEST THE RETURN CODE
+         JZ    GETDSCB             BR IF OK
+         L     1,=A(MSG001)
+         BAS   14,FMTLINE
+         MVI   RC,12
+         B     EXIT
+GETDSCB  SR    0,0                 SET REG 0 = 0S
+         OBTAIN CAMLST1            OBTAIN THE FORMAT 1 DSCB OF THE    ->
+                                     INPUT DATA SET
+         LTR   15,15               TEST RETURN CODE
+         JZ    GOTDSCB             BR IF WE RETRIEVED THE DSCB
+         LA    0,1                 SET USER ABEND CODE
+         L     1,=A(MSG001)        LOAD ADDRESS OF THE MESSAGE
+         BAS   14,FMTLINE
+         MVI   RC,12
+         J     EXIT
+         USING F1DSCB,INDSCB-(DS1FMTID-F1DSCB) ESTABLISH ADDRESSABILITY
+GOTDSCB  MVC   ODCB.DCBDSORG,DS1DSORG  COPY THE DSORG
+         MVC   MDCB.DCBDSORG,DS1DSORG  COPY THE DSORG
+         MVC   ODCB.DCBRECFM,DS1RECFM   AND THE BASIC DATA SET
+         MVC   MDCB.DCBRECFM,DS1RECFM   AND THE BASIC DATA SET
+         MVC   ODCB.DCBLRECL,DS1LRECL    ATTRIBUTES TO THE
+         MVC   MDCB.DCBLRECL,DS1LRECL    ATTRIBUTES TO THE
+         MVC   ODCB.DCBBLKSI,DS1BLKL      OUTPUT DCB
+         MVC   MDCB.DCBBLKSI,DS1BLKL      OUTPUT DCB
+         LA    2,OPARM             LOAD ADDRESS OF THE OPEN PARM LIST
+         OPEN  MF=(E,(2))          OPEN THE DCBS
+TESTOPEN L     3,0(,2)             LOAD A DCB ADDRESS FROM THE PARM LST
+         TM    DCBOFLGS-IHADCB(3),DCBOFOPN  TEST OF THE DCB IS OPEM
+         JO    TESTOEND            DCB IS OPEN, CONTINUE TO NEXT DCB
+*        LA    0,OHANDLE           LOAD ADDRESS OF THE OUTPUT HANDLE
+         L     1,=A(MSG002)        LOAD ADDRESS OF THE MESSAGE
+*        MVC   MSG002DD-MSG002(,1),DCBDDNAM-IHADCB(3)  COPY DDNAME TO ->
+                                                        MESSAGE
+         MVI   RC,12               SET THE RETURN CODE
+TESTOEND TM    0(2),X'80'          TEST IF LAST DCB POINTER
+         LA    2,4(,2)             LOAD ADDRESS OF THE NEXT DCB POINTER
+         JZ    TESTOPEN            BR IF ANOTHER DCB TO TEST
+         CLI   RC,0                ERROR?
+         BNE   EXIT                YES
+         LA    1,INPUT             COMPUTE TRACKS IN THE INPUT DATA SET
+         BAS   14,GETSIZE
+         LR    3,0
+         LA    1,OUTPUT           COMPUTE TRACKS IN THE OUTPUT DATA SET
+         BAS   14,GETSIZE
+         CR    3,0
+         BNH   SIZEOK
+         LR    3,0
+         L     1,=A(MSG007)
+         BAS   14,FMTLINE
+         MVI   RC,4
+         L     1,CAMLST1+12        LOAD ADDRESS OF THE DSCB OF THE    ->
+                                    INPUT DATA SET
+         CLM   3,B'0011',DS1LSTAR-DS1FMTID(1)  WILL THE USED TRACKS   ->
+                                                IN THE INPUT DATA SET ->
+                                                 FIT IN THE OUTPUT D.S
+         BNL   SIZEWARN                        YES
+         MVI   RC,12
+         CLOSE MF=(E,CPARM)
+         B     EXIT
+SIZEWARN L     1,=A(MSG008)
+         BAS   14,FMTLINE
+         L     1,=A(MSG009)
+         BAS   14,FMTLINE
+SIZEOK   SR    3,3                 SET THE RELATIVE TRACK TO 0
+READTRK  LR    0,3                 COPY THE RELATIVE TRACK TO REG 0
+         SLL   0,16                CONVERT 00TT TO TT00
+         L     1,IDCB.DCBDEBAD     LOAD ADDRESS OF THE DEB
+         N     1,=A(X'FFFFFF')     ISOLATE THE 24-BIT ADDRESS
+         LA    2,IOBSEEK           LOAD ADDRESS OF THE FULL DISK ADDR
+         L     15,CVTPTR           LOAD ADDRESS OF THE CVT
+         L     15,CVTPCNVT-CVTMAP(,15)  LOAD ADDRESS OF THE TTRN TO   ->
+                                         MBBCCHHR CONVERSION ROUTINE
+         STM   8,13,12(13)         STORE REGS 8 THROUGH 13 IN THE     ->
+                                    SAVE AREA
+         LR    8,13                COPY REG 13 TO REG 8
+         BASR  14,15               CALL THE TTRN TO MBBCCHHR          ->
+                                    CONVERSION ROUTINE
+         LM    8,13,12(8)          RESTORE REGS 8 THROUGH 13
+         LTR   15,15               TEST THE RETURN CODE FROM THE      ->
+                                    CONVERSION ROUTINE
+         JNZ   DONEREAD            BR IF WE'VE PROCESSED ALL THE TRACKS
+         MVI   ECB,0               RESET THE ECB
+         EXCP  IOB                 START I/O TO READ A TRACK INTO     ->
+                                     STORAGE
+         WAIT  1,ECB=ECB           WAIT FOR THE I/O TO COMPLETE
+         CLI   ECB,X'7F'           TEST THE COMPLETION CODE
+         JE    READOK              BR IF THE I/O IS OK
+         LA    0,3                 LOAD ABEND CODE
+         L     1,=A(MSG003)        LOAD ADDRESS OF ERROR MESSAGE
+*        STH   3,12(,13)           SAVE THE RELATVE TRACK
+*        UNPK  16(5,13),12(3,13)   TRANSLATE THE RELATIVE TRACK TO
+*        TR    16(4,13),HEXTAB      HEXADECIMAL DIGITS
+*        MVC   MSG003TT-MSG003(,1),16(13)  COPY HEX DIGITS TO MSG
+         J     ERRABND             GO WRITE THE ERROR MSG AND QUIT
+READOK   ICM   0,B'0011',IOB+8+6   LOAD THE RESIDUAL BYTE COUNT FROM  ->
+                                    THE PSEUDO CSW IN THE IOB
+         CLM   0,B'0011',READCCW+6 TEST IF NO DATA READ (E.G., THE    ->
+                                    TRACK IS EMPTY)
+         JNE   WRITETRK            WRITE THE TRACK IF THE INPUT TRACK ->
+                                    HAS DATA
+* THE INPUT TRACK IS EMPTY.  SINCE THERE IS NO WAY I CAN WRITE AN
+* EMPTY TRACK IN THE OUTPUT DATA SET WE'LL QUIT THE COPY IF THE EMPTY
+* TRACK IS AFTER THE DS1LSTAR TT, OR ABEND IF NOT
+         L     1,=A(MSG004)        LOAD ADDRESS OF THE ERROR MESSAGE
+*        STH   3,12(,13)           STORE THE CURRENT TT IN THE        ->
+                                    SAVE AREA
+*        UNPK  16(5,13),12(3,13)   TRANSLATE THE RELATIVE TRACK TO
+*        TR    16(4,13),HEXTAB      HEX DIGITS
+*        MVC   MSG004TT-MSG004(,1),16(13)  COPY TT TO MSG
+         LA    0,4                 SET THE ABEND CODE
+         CLM   3,B'0011',DS1LSTAR  COMPARE THE CURRENT RELATIVE TRACK ->
+                                    WITH THE HIGH USED TRACK
+         JNH   ERRABND             BR IF THE EMPTY TRACK IS IN THE    ->
+                                    USED DATA AREA
+*        LA    0,FMTWORK           LOAD ADDR OF THE MICROFMT WORK AREA
+*        L     15,=V(MINIFMT)      LOAD ADDRESS OF MINIFMT
+*        CALL  (15)                CREATE THE ERROR MESSAGE
+*        LA    0,OHANDLE           LOAD ADDRESS OF THE OUTPUT HANDLE
+*        L     15,=V(OWRITE)       LOAD ADDRESS OF OWRITE
+*        CALL  (15)                WRITE THE ERROR MSG
+         BAS   14,FMTLINE
+         J     DONEREAD            AND EXIT NORMALLY
+WRITETRK LA    2,OUTSEEK           LOAD ADDRESS OF THE OUTPUT DATA    ->
+                                    SET MBBCCHHR
+         LR    0,3                 COPY THE RELATIVE TRACK TO REG 0
+         SLL   0,16                CONVERT 00TT TO TT00
+         L     1,ODCB.DCBDEBAD     LOAD THE DEB ADDRESS
+         N     1,=A(X'FFFFFF')
+         L     15,CVTPTR
+         L     15,CVTPCNVT-CVTMAP(,15)
+         STM   8,13,12(13)
+         LR    8,13
+         BASR  14,15               CALL THE TTRN TO MBBCCHHR          ->
+                                    CONVERSION ROUTINE
+         LM    8,13,12(8)
+         LTR   15,15               TEST THE RETURN CODE
+         JZ    CHKLSTAR            BR IF THE CONVERSION IS OK
+         LR    0,3                 COPY THE CURRENT TT TO REG 0
+         AHI   0,-1                SET REG 0 TO LAST TRACK WE WROTE
+         CLM   0,B'0011',DS1LSTAR  COMPARE TT OF LAST TRACK WE WROTE  ->
+                                    WITH THE TT OF THE LAST ACTIVE    ->
+                                     TRACK
+         JNL   DONEREAD            BR IF WE WROTE ALL THE "REAL" TRACKS
+         DC    H'0'                ABEND IF THE OUTPUT DATA SET IS    ->
+                                    SMALLER THAN THE INPUT DATA SET
+CHKLSTAR CLM   3,B'0011',DS1LSTAR  TEST IF THIS RELATIVE TRACK IS     ->
+                                    LAST USED TRACK IN THE DATA SET
+         JNE   GENCCWS             BR IF NOT
+         MVC   ODCB.DCBFDAD,OUTSEEK  SAVE THE OUTPUT TRACK ADDRESS    ->
+                                      IN THE DCB
+         MVC   ODCB.DCBFDAD+7,DS1LSTAR+2  COPY THE R FROM DCBLSTAR    ->
+                                           TO THE OUTPUT DCB
+         MVC   ODCB.DCBTRBAL,DS1TRBAL  COPY THE INPUT TRACK BALANCE   ->
+                                        TO THE OUTPUT DCB
+GENCCWS  SR    15,15               SET REG 15 = 0
+         SR    14,14               SET REG 14 = 0
+         ICM   15,B'0011',READCCW+6 LOAD THE BYTES IN THE INPUT TRACK ->
+                                     THAT WE TRIED TO READ
+         ICM   14,B'0011',IOB+8+6  LOAD THE RESIDUAL BYTE COUNT FROM  ->
+                                    THE PSEUDO CSW IN THE INPUT IOB
+         SR    15,14               COMPUTE THE ACTUAL SIZE OF THE     ->
+                                    TRACK IMAGE
+         LA    15,TRKBUF(15)       COMPUTE THE END OF THE INPUT TRACK ->
+                                    IMAGE
+         AHI   15,-1               COMPUTE THE ADDRESS OF THE LAST    ->
+                                    BYTE IN THE INPUT TRACK IMAGE
+         LA    1,TRKBUF            LOAD THE ADDRESS OF THE TRACK IMAGE
+         LA    4,OUTWRITE          LOAD ADDRESS OF THE FIRST WRITE    ->
+                                    COUNT-KEY-DATA CCW AREA
+GENCCW   XC    0(8,4),0(4)         CLEAR THE WRITE C-K-D CCW AREA
+         ST    1,0(,4)             STORE THE ADDRESS OF THE COUNT     ->
+                                    AREA IN THE WRITE C-K-D CCW
+         SR    14,14               SET REG 14 = 0
+         IC    14,5(,1)            LOAD THE KEY LENGTH OF THE RECORD  ->
+                                    FROM THE COUNT AREA
+         AH    14,6(,1)            ADD THE DATA LENGTH OF THE RECORD
+         AHI   14,8                ADD THE LENGTH OF THE COUNT DATA
+         STH   14,6(,4)            STORE THE DATA LENGTH IN THE WRITE ->
+                                    COUNT-KEY-DATA CCW
+         OC    0(8,4),WRITECCW     OVERLAY THE ADDRESS AND LENGTH     ->
+                                    WITH THE REST OF A WRITE C-K-D CCW
+         MVC   0(4,1),OUTSEEK+3    COPY THE OUTPUT CCHH TO THE COUNT  ->
+                                    AREA
+         AHI   4,8                 UPDATE REG 4 TO POINT TO THE NXT CCW
+         BRXLE 1,14,GENCCW         UPDATE REG 1 TO THE NEXT INPUT     ->
+                                    COUNT AREA
+         AHI   4,-8                COMPUTE ADDRESS OF THE LAST CCW
+         MVI   4(4),0              RESET THE CCW FLAGS
+         MVI   ECB,0               RESET THE ECB
+         EXCP  OUTIOB              WRITE AN OUTPUT TRACK
+         WAIT  1,ECB=ECB           WAIT FOR THE I/O TO COMPLETE
+         CLI   ECB,X'7F'           TEST THE I/O COMPLETION
+         JE    WRITEOK             BR IF OK
+         L     1,=A(MSG005)        LOAD ADDRESS OF MSF
+*        STH   3,12(,13)           STORE THE CURRENT TT IN THE        ->
+                                    SAVE AREA
+*        UNPK  16(5,13),12(3,13)   TRANSLATE THE RELATIVE TRACK TO
+*        TR    16(4,13),HEXTAB      HEX DIGITS
+*        MVC   MSG005TT-MSG005(,1),16(13)  COPY TT TO MSG
+         LA    0,5                 SET THE ABEND CODE
+         J    ERRABND              GO WRITE THE MSG AND ABEND
+WRITEOK  AHI   3,1                 UPDATE THE RELATIVE TRACK
+         J     READTRK             GO READ THE NEXT TRACK
+DONEREAD CLOSE MF=(E,CPARM)        CLOSE THE DATA SETS
+         OPEN  MF=(E,OPARMM)
+         CLOSE MF=(E,CPARMM)
+         L     1,=A(MSG006)        LOAD ADDRESS OF THE MESSAGE
+*        LA    0,FMTWORK           LOAD ADDR OF THE MICROFMT WORK AREA
+*        L     15,=V(MINIFMT)      LOAD ADDR OF MINIFMT
+*        CALL  (15)                GENERATE THE MESSAGE
+*        LA    0,OHANDLE           LOAD ADDRESS OF THE OUTPUT HANDLE
+*        L     15,=V(OWRITE)       LOAD ADDRESS OF OWRITE
+*        CALL  (15)                WRITE THE MESSAGE
+         BAS   14,FMTLINE
+*        LA    0,OHANDLE           LOAD ADDRESS OF THE OUTPUT HANDLE
+*        L     15,=V(OCLOSE)       LOAD ADDRESS OF OCLOSE
+*        CALL  (15)                CLOSE SYSPRINT
+EXIT     LA    1,CLOSEPR           CLOSE SYSPRINT
+         BAS   14,CLOSELST
+         SR    15,15               LOAD THE RETURN CODE
+         IC    15,RC
+         L     13,4(,13)           LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T,RC=(15)  RESTORE REGS & RETURN TO THE CALLER
+ERRABND  LR    2,0                 COPY THE ABEND CODE TO REG 2
+*        LA    0,FMTWORK           LOAD ADDR OF THE MICROFMT WORK AREA
+*        L     15,=V(MINIFMT)      LOAD ADDRESS OF MINIFMT
+*        CALL  (15)                BUILD THE MESSAGE
+*        LA    0,OHANDLE           LOAD ADDRESS OF THE OUTPUT HANDLE
+*        L     15,=V(OWRITE)       LOAD ADDRESS OF OWRITE
+*        CALL  (15)                WRITE THE ERROR MESSAGE
+         BAS   14,FMTLINE
+*        LA    0,OHANDLE           LOAD ADDRESS OF THE OUTPUT HANDLE
+*        L     15,=V(OCLOSE)       LOAD ADDRESS OF OCLOSE
+*        CALL  (15)                CLOSE SYSPRINT
+         LA    1,CLOSEPR
+         BAS   14,CLOSELST
+         L     13,4(,13)           LOAD ADDR OF THE CALLER'S SAVE AREA
+         ABEND (2),DUMP            KILL ME DEAD
+         EJECT
+         CNOP  0,8
+INITHDR  BASR  15,0
+         SAVE  14,,,INITHDR        SAVE REG 14
+         LA    15,72(,13)          PREPARE A
+         ST    13,4(,15)            NEW
+         ST    15,8(,13)             SAVE
+         LR    13,15                  AREA
+         LA    0,FMTWORK           COMPUTE ADDRESS OF FMTWORK
+         L     1,=A(MSG010)        LOAD ADDRESS OF FORMAT TO PREPARE  ->
+                                    DD MMM YYYY HH:MM
+         L     15,=V(MINIFMT)      USE MINIFMT TO PREPARE DD MMM YYYY
+         CALL  (15)
+         LA    0,4(,1)             COMPUTE ADDRESS OF DD MMM YYYY HH:MM
+         LH    1,0(,1)             LOAD LENGTH OF DD MMM YYYY HH:MM
+         AHI   1,-4                SUBTRACT SIZE OF AN RDW
+         LA    14,PAGEHDR          LOAD ADDRESS OF THE PAGE HEADER
+         LH    15,PAGEHDR          LOAD LENGTH OFG THE PAGE HEADER
+         AR    14,15               COMPUTE ADDRESS OF THE END OF THE  ->
+                                    PAGE HEADER
+         AHI   14,-12              SUBTRACT BYTES IN PAGE NNNNN
+         SR    14,1                SUBTRACT BYTES IN DD MMM YYYY HH:MM
+         LR    15,1                COPY BYTES IN DD MM YYYY HH:MM TO  ->
+                                    REG 15
+         MVCL  14,0                COPY DD MMM YYYY HH:MM TO PAGE HDR
+         L     13,4(,13)           LOAD ADDR OF CALLER'S SAVE AREA
+         RETURN 14                 RESTORE REG 14 & RETURN
+         EJECT
+         CNOP  0,8
+GETSIZE  BASR  15,0
+         SAVE  (14,1),,GETSIZE     SAVE REGISTERS
+         L     1,DCBDEBAD-IHADCB(,1)  LOAD ADDRESS OF THE DEB
+         N     1,=A(X'FFFFFF')     ISOLATE THE 24-BIT ADDRESS
+         SR    0,0                 SET REGS 0, 14 & 15 TO ZERO
+         SR    15,15
+         SR    14,14
+         IC    0,DEBNMEXT-DEBBASIC(,1)  LOAD NUMBER OF EXTENTS
+         LA    1,DEBBASND-DEBBASIC(,1)  COMPUTE ADDR OF THE 1ST EXTENT
+GETS0100 ICM   14,B'0011',DEBNMTRK-DEBDASD(1)  LOAD TRACKS IN EXTENT
+         AR    15,14               ADD TRACKS TO TOTAL
+         LA    1,DEBDASDE-DEBDASD(,1)  COMPUTE ADDR OF THE NEXT EXTENT
+         BCT   0,GETS0100
+         ST    15,20(,13)          REPLACE CALLER'S REG 0 W/ TRACKS
+         RETURN (14,1)             RESTORE REGS & RETURN
+         EJECT
+         CNOP  0,8
+CLOSELST BASR  15,0
+         SAVE  (14,3),,CLOSELST
+         LR    2,1
+         CLOSE MF=(E,(1))
+         L     3,=A(X'FFFFFF')
+CLL0100  L     1,0(,2)
+         NR    1,3
+         FREEPOOL (1)
+         TM    0(2),X'80'
+         LA    2,4(,2)
+         BZ    CLL0100
+         RETURN (14,3)
+         EJECT
+         CNOP  0,8
+FMTLINE  BASR  15,0
+         SAVE  14,,FMTLINE         SAVE REG 14
+         LA    15,72(,13)          PREPARE A
+         ST    13,4(,15)            NEW
+         ST    15,8(,13)             SAVE
+         LR    13,15                  AREA
+         LA    0,FMTWORK           USE MINIFMT TO
+         L     15,=V(MINIFMT)       PREPARE THE
+         CALL  (15)                  OUTPUT LINE
+         BAS   14,OUTEDIT          WRITE THE LINE
+         L     13,4(,13)           RESTORE REG 13
+         RETURN 14                 RESTORE REG 14 & RETURN
+         EJECT
+         CNOP  0,8
+OUTEDIT  BASR  15,0
+         SAVE  (14,4),,OUTEDIT     SAVE REGISTERS
+         LA    15,72(,13)          PREPARE A
+         ST    13,4(,15)            NEW
+         ST    15,8(,13)             SAVE
+         LR    13,15                  AREA
+         LR    2,1                 COPY THE LINE ADDRESS TO REG 2
+         SR    3,3                  SET REGS 3 AND
+         SR    4,4                   4 TO ZERO
+         IC    3,4(,1)             LOAD THE CARRIAGE CONTROL CHARACTER
+         IC    4,ASATAB(3)         LOAD LINES THIS LINE WILL PRINT
+         AH    4,PAGEPOS           COMPUTE NEW PAGE POSITION AFTER
+         CHI   4,60                WILL LINE PRINT ON CURRENT PAGE?
+         BNH   OE0100              YES
+         AP    PAGENUM,=P'1'       UPDATE THE PAGE NUMBER
+         MVC   P#,=X'402020202120' CONVERT THE PAGE NUMBER
+         ED    P#,PAGENUM           TO DECIMAL DIGITS
+         PUT   PRINT,PAGEHDR       WRITE THE PAGE HEADER
+         LA    4,3                 SET THE PAGE POSITION TO LINE 3
+         MVI   4(2),C'0'           RESET THE CARRIAGE CONTROL
+OE0100   PUT   PRINT,(2)           PRINT LINE ACTUAL LINE
+         STH   4,PAGEPOS           UPDATE THE PAGE POSITION
+         STC   3,4(,2)             RESTORE THE CARRIAGE CONTROL
+         L     13,4(,13)           RETURN
+         RETURN (14,4)
+         EJECT
+S        DC    (5*9)D'0'           5 SAVE AREAS
+ASATAB   DC    0XL256'0'                    TABLE TO
+         DC    (C' ')X'FF'                   TRANSLATE
+         DC    AL1(1),(C'+'-(*-ASATAB))X'FF'  CARRIAGE
+         DC    AL1(0),(C'-'-(*-ASATAB))X'FF'   CONTROL
+         DC    AL1(3),(C'0'-(*-ASATAB))X'FF'    CHARACTER TO
+         DC    AL1(2),(256-(*-ASATAB))X'FF'      LINES A LINE PRINTS
+FMTWORK  DC    XL200'0'            MINIFMT WORK AREA
+OPARM    OPEN  (INPUT,INPUT,OUTPUT,OUTPUT),MF=L  OPEN PARM LIST
+OPARMM   OPEN  (MODDCB,EXTEND),MF=L
+OPENPR   OPEN  (PRINT,OUTPUT),MF=L
+CLOSEPR  CLOSE PRINT,MF=L
+CPARM    CLOSE (INPUT,,OUTPUT),MF=L  CLOSE PARM LIST
+CPARMM   CLOSE MODDCB,MF=L
+PAGEPOS  DC    H'255'
+         PUSH  PRINT
+         PRINT NOGEN
+PRINT    DCB   DSORG=PS,MACRF=PM,DDNAME=SYSPRINT,RECFM=VBA,LRECL=125
+INPUT    DCB   MACRF=E,DDNAME=INPUT,EXLST=XLIST1
+OUTPUT   DCB   MACRF=E,DDNAME=OUTPUT,DSORG=PS,RECFM=F,LRECL=0,        ->
+               BLKSIZE=0,EXLST=XLIST2
+MODDCB   DCB   MACRF=W,DDNAME=OUTPUT,DSORG=PS,RECFM=F,LRECL=0,        ->
+               BLKSIZE=0
+XLIST1   DC    0A(0),AL1(X'80'+7),AL3(INJFCB)
+XLIST2   DC    0A(0),AL1(X'80'+7),AL3(OUTJFCB)
+CAMLST1  CAMLST SEARCH,(JFCBDSNM-JFCB)+INJFCB,(JFCBVOLS-JFCB)+INJFCB,IN>
+               DSCB
+CAMLST2  CAMLST SEARCH,(JFCBDSNM-JFCB)+INJFCB,(JFCBVOLS-JFCB)+INJFCB,OU>
+               TDSCB
+INJFCB   DC    0A(0),XL176'0'
+INDSCB   DC    XL140'0'
+OUTDSCB  DC    XL140'0'
+         POP   PRINT
+* DEFINE THE INPUT DATA SET IOB
+IOB      DC    0XL40'0',AL1(X'42',0,0,0),A(ECB,0,0,READCCWS,INPUT,0,0)
+IOBSEEK  DC    XL8'0'
+* DEFINE THE OUTPUT DATA SET IOB
+OUTIOB   DC    0XL40'0',AL1(X'42',0,0,0),A(ECB,0,0,OUTCCWS,OUTPUT,0,0)
+OUTSEEK  DC    XL8'0'
+*HEXTAB   EQU   *-C'0'
+*        DC    C'0123456789ABCDEF'
+* CHANNEL PROGRAM TO READ A TRACK IMAGE
+READCCWS CCW   X'31',IOBSEEK+3,X'40',5  SEARCH ID EQUAL
+         CCW   X'08',*-8,0,0            TIC
+READCCW  CCW   X'5E',TRKBUF,X'20',X'FFFF' READ MULTIPLE C-K-D
+WRITECCW CCW   X'1D',*-*,X'40',*-*      MASTER WRITE COUNT-KEY-DATA
+* CHANNEL PROGRAM TO WRITE A TRACK IMAGE
+OUTCCWS  CCW   X'31',OUTSEEK+3,X'40',5  SEARCH ID EQUAL
+         CCW   X'08',*-8,0,0            TIC
+OUTWRITE DC    100D'0'                  WRITE COUNT-KEY-DATA
+ECB      DC    F'0'                EVENT CONTROL BLOCK
+*OHANDLE  DC    A(*-*)              OUTEDIT OUTPUT HANDLE
+         DC    0D'0'               FORCE DOUBLE WORD ALIGNMENT
+         LTORG ,                   DEFINE THE LITERAL POOL
+RC       DC    AL1(0)
+HDR      DC   0C'S I M P L E   I M A G E   C O P Y   U T I L I T Y'
+LEFT     EQU   1+((120-L'HDR)/2)
+RIGHT    EQU   121-LEFT-L'HDR-10
+PAGEHDR  DC    Y(PAGEHDRL,0)
+         DC    CL(LEFT)'1(ICOPY V1L3 &SYSDATE &SYSTIME)'
+         DC    C'S I M P L E   I M A G E   C O P Y   U T I L I T Y'
+         DC    CL(RIGHT)' ',C'PAGE'
+P#       DC    C' NNNNN'
+PAGEHDRL EQU   *-PAGEHDR           BETTER BE 00007D (125)
+PAGENUM  DC    P'00000'
+         DC    0D'0'               FORCE DOUBLE WORD ALIGNMENT
+TRKBUF   DS    (X'FFFF')X          DEFINE STORAGE FOR THE TRACK BUFFER
+OUTJFCB  DC    0A(0),XL176'0'
+         DS    0D'0'               FORCE DOUBLE WORD ALIGNMENT
+         SPACE 1
+MSG001   DC    AL1(L'MSG001A)
+MSG001A  DC    C' UNABLE TO OBTAIN DATA SET ATTRIBUTES',X'FF'
+         SPACE 1
+*MSG002  DC    AL2(MSG002L,0),C' UNABLE TO OPEN DDNAME '
+*MSG002DD DC    CL8' '
+*MSG002L  EQU   *-MSG002
+MSG002   DC    AL1(L'MSG002A)
+MSG002A  DC    C' UNABLE TO OPEN DDNAME '
+         DC    AL.2(3),AL.6(0),AL1(L'DCBDDNAM,0),SL2(DCBDDNAM-IHADCB(3)>
+               ),X'FF'
+         SPACE 1
+*MSG003  DC    AL2(MSG003L,0),C' INPUT I/O ERROR READING RELATIVE TRACK>
+                '
+*MSG003TT DC    CL4' '
+*MSG003L  EQU   *-MSG003
+MSG003   DC    AL1(L'MSG003A)
+MSG003A  DC    C' INPUT I/O ERROR READING RELATIVE TRACK '
+         DC    AL.2(3),AL.6(2),AL1(2,0),SL2(34(13))
+         DC    AL1(4),CL4' AT '
+         DC    AL1(X'C0'+2,4,0),SL2(IOBSEEK+3),X'FF'
+         SPACE 1
+*MSG004  DC    AL2(MSG004L,0),C' EMPTY TRACK DETECTED AT RELATIVE TRACK>
+                '
+*MSG004TT DC    CL4' '
+*MSG004L  EQU   *-MSG004
+MSG004   DC    AL1(L'MSG004A)
+MSG004A  DC    C' EMPTY TRACK DETECTED AT RELATIVE TRACK '
+         DC    AL.2(3),AL.6(2),AL1(2,0),SL2(34(13))
+         DC    AL1(4),CL4' AT '
+         DC    AL1(X'C0'+2,4,0),SL2(IOBSEEK+3),X'FF'
+         SPACE 1
+*MSG005  DC    AL2(MSG005L,0),C' OUTPUT I/O ERROR WRITING RELATIVE TRAC>
+               K '
+*MSG005TT DC    CL4' '
+*MSG005L  EQU   *-MSG005
+MSG005   DC    AL1(L'MSG005A)
+MSG005A  DC    C' OUTPUT I/O ERROR WRITING RELATIVE TRACK '
+         DC    AL.2(3),AL.6(2),AL1(2,0),SL2(34(13))
+         DC    AL1(4),CL4' AT '
+         DC    AL1(X'C0'+2,4,0),SL2(OUTSEEK+3),X'FF'
+         SPACE 1
+*MSG006   DC    AL2(MSG006L,0),C' SOURCE DATA SET SUCCESSFULLY COPIED'
+*MSG006L  EQU   *-MSG006
+*MSG006   DC    AL1(L'MSG006A)
+*MSG006A  DC    C' SOURCE DATA SET SUCCESSFULLY COPIED',X'FF'
+MSG006   DC    AL1(1),C' '
+         DC    AL1(X'80'+0,L'JFCBDSNM,0),AL4((JFCBDSNM-JFCB)+INJFCB)
+         DC    AL1(L'MSG006B)
+MSG006B  DC    C' COPIED TO '
+         DC    AL1(X'80'+0,L'JFCBDSNM,0),AL4((JFCBDSNM-JFCB)+OUTJFCB)
+         DC    X'FF'
+         SPACE 1
+MSG007   DC    AL1(L'MSG007A)
+MSG007A  DC    C' THE INPUT DATA SET IS LARGER THAN THE OUTPUT DATA SET>
+               ',X'FF'
+         SPACE 1
+MSG008   DC    AL1(L'MSG008A)
+MSG008A  DC    C' ICOPY WILL COPY THE DATA SET AS THE USED TRACKS OF TH>
+               E INPUT DATA SET',X'FF'
+         SPACE 1
+MSG009   DC    AL1(L'MSG009A)
+MSG009A  DC    C' WILL FIT INTO THE OUTPUT DATA SET',X'FF'
+         SPACE 1
+MSG010   DC    AL1(X'80'+4,13,0)   DAY OF MONTH
+         DC    AL1(1),C' '
+         DC    AL1(X'80'+4,11,0)   ABBREVIATED MONTH
+         DC    AL1(1),C' '
+         DC    AL1(X'80'+4,8,1),X'FF'  YYYY HH:MM
+MSG011   WTO   'ICOPY - UNABLE TO OPEN SYSPRINT',                     ->
+               MF=L,ROUTCDE=11,DESC=7
+         DC    0D'0'               FORCE DOUBLE WORD ALIGNMENT
+*OUTDFLT  CSECT
+*        DC    3AL2(120),AL1(DCBRECV,60)
+         END   ICOPY

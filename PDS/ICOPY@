@@ -1,0 +1,32 @@
+               Notes about using ICOPY
+
+1.  ICOPY is a dataset copying program which works by copying
+    tracks, using EXCP.  For that reason, you can copy a pds
+    without specifying the SPACE requirements for the directory
+    in the JCL.  Since ICOPY duplicates the track contents of
+    the original dataset, it will copy the directory block
+    structure, as well, without any user intervention.
+
+    All you need to specify in the JCL, is the SPACE requirement
+    for the output dataset.  You don't need to specify the number
+    of directory blocks in the JCL, for an output pds.
+
+2.  VERY IMPORTANTLY, WHEN COPYING A PARTITIONED DATASET WITH
+    ICOPY, ALL DELETED MEMBERS ARE PRESERVED.  This is because
+    ICOPY is a "track copying program", as opposed to IEBCOPY,
+    which is a "member copying program".
+
+2.  ICOPY will not copy DSORG=DA datasets.
+
+3.  ICOPY will not copy PDSE's.
+
+4.  ICOPY is very handy when trying to duplicate a non-VSAM dataset,
+    and you don't know the DCB specs, just the size.  You can make
+    a copy of some large pds like SYS1.LINKLIB in a jiffy, using this
+    utility.
+
+5.  ICOPY needs to be linked together with the MINIFMT program.
+    For an example of the ASM-LINK JCL, see member ICOPY$.
+    For an example of the run JCL, see member ICOPYJ1.
+
+

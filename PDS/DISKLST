@@ -1,0 +1,2036 @@
+DISKLIST TITLE '                     D I S K L I S T   V T O C   A N A >
+               L Y S I S   U T I L I T Y'
+***********************************************************************
+*                                                                     *
+* Title -- DISKLIST                                                   *
+*                                                                     *
+* Function / Operation -- DISKLIST analyzes the contents of the VTOC  *
+*   and VTOC index of one or more disk volumes.                       *
+*                                                                     *
+* JCL --                                                              *
+*   //        EXEC PGM=DISKLIST,PARM='option,VOL(xxx,xxx,...),option' *
+*   //SYSPRINT DD  SYSOUT=*                                           *
+*                                                                     *
+*   The xxx is a selection mask, either a complete volume serial      *
+*   or a selection mask.  These masking characters can be used -      *
+*    % - Any character                                                *
+*    # - Any numeric character                                        *
+*    * - End of selection mask                                        *
+*                                                                     *
+*   These options can be specified -                                  *
+*    EXTMAP - Display an extent map following the data set list.      *
+*    NOEXTMAP - Do not display an extent map.  The extent map is      *
+*      displayed if DISKLIST detected an error.                       *
+*                                                                     *
+* Attributes -- DISKLIST is not reenterable, not refreshable and      *
+*   not reusable.  It operates in task mode, enabled, problem         *
+*   state and problem key.  It uses no APF restricted operating       *
+*   system services.                                                  *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V5L1 -- May 2018                                                  *
+*    - Correct S002 ABEND in SYSPRINT following an I/O error.         *
+*   V5L0 -- January 2015                                              *
+*                                                                     *
+* Restrictions -                                                      *
+*   * Data sets containing more than 65535 tracks are not supported.  *
+*   * "Extended" attribute volumes are not supported.                 *
+*                                                                     *
+* External Routines - MINIFMT, LJUST and QSORTL                       *
+*                                                                     *
+* This version is intended to be a simplified version of DISKLIST     *
+* version 4 and DISKTASK.                                             *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         MACRO
+&NAME    GENCCWS &N,&IOB,&IOBUF
+         ACTR  20000
+         LCLA  &A
+&NAME    CCW   X'31',&IOB+32+3,X'40',5
+         CCW   X'08',&NAME,0,0
+.L       AIF   (&A GE &N-1).LASTCCW
+         CCW   X'9E',&IOBUF+DSCBSIZE*&A,X'40',DSCBSIZE
+&A       SETA  &A+1
+         AGO   .L
+.LASTCCW CCW   X'9E',&IOBUF+DSCBSIZE*&A,0,DSCBSIZE
+         MEND
+         EJECT
+DISKLIST RSECT                     Define program CSECT
+         PUSH  PRINT
+         PRINT NOGEN
+         SYSSTATE ARCHLVL=2
+         DCBD  DSORG=QS,DEVD=DA
+         CVT   DSECT=YES
+         IEFUCBOB ,
+         IEFZB4D0 ,
+         IEFZB4D2 ,
+         IHADVCT ,
+         ICVAFPL ,
+         SPACE 1
+DSCB     DSECT
+COUNT    DS    XL8
+         IECSDSL1 1
+         ORG   DSCB+L'COUNT
+         IECSDSL1 3
+         ORG   DS1FMTID
+         IECSDSL1 4
+         ORG   DSCB+L'COUNT
+         IECSDSL1 5
+         ORG   DSCB+L'COUNT
+* FORMAT 7 DSCB FROM DFSMS DIAGNOSIS REFERENCE
+DS7KEYID DS    0XL4,4X'07'
+DS7EXTNT DS    0XL40,5XL8
+DS7FMTID DS    C'7'
+DS7ADEXT DS    0XL88,11XL8,XL2
+DS7PTRDS DS    XL5
+         ORG   ,
+DSCBSIZE EQU   *-DSCB
+         SPACE 1
+         EJECT
+KRECORD  DSECT
+* THE FOLLOWING SECTION DESCRIBES THE RECORD PRODUCED FOR VTOC ENTRIES
+KVDSN    DS    CL44    DSNAME FOR THIS DATA SET
+KVTYPE   DS    C       SET TO EBCDIC 'V' TO INDICATE RECORD IS A
+*                      VOLUME RECORD.
+KVRECFM  DS    BL1     RECFM FOR DATA SET (FROM F1 DSCB)
+KVVOLSQ  DS    H       VOLUME SEQUENCE OF THIS DATA SET
+KVDEVTP  DS    BL4     BINARY DEVTYPE FROM UCB
+KVDEVTYP DS    CL8     DEVICE TYPE FROM DEVICE NAME TABLE OF VOLUME
+*                      HOLDING THIS DATA SET
+KVVOLSER DS    CL6     VOLUME SERIAL OF VOLUME HOLDING THIS DATA SET
+*                      (THIS IS NOT THE VOLUME STORED IN THE FORMAT 1
+*                      DSCB, BUT THAT OF THE ACTUAL VOLUME)
+KVLRECL  DS    H       LOGICAL RECORD LENGTH OF THE RECORDS IN THIS
+*                      DATA SET
+KVBLKSI  DS    H       BLKSIZE OF THE RECORDS IN THIS DATA SET
+KVDSORG  DS    BL2     DSORG OF THIS DATA SET
+KVALLOC  DS    FL4     NUMBER OF TRACKS ALLOCATED TO THIS DATA SET
+KVUSED   DS    FL4     NUMBER OF TRACKS USED IN THIS DATA SET IF THE
+*                      DATA SET IS SEQUENTIAL, DIRECT OR PARTITIONED.
+KVSECALL DS    F       NUMBER OF TRACKS OF SECONDARY ALLOCATION
+KVEXTNT  DS    H       NUMBER OF EXTENTS IN THIS DATA SET
+KVCREDT  DS    CL7     DATE (IN YYYYDDD FORM) DATA SET CREATED
+KVEXPDT  DS    CL7     DATE (IN YYYYDDD FORM) DATA SET CAN BE PURGED
+KVLASTU  DS    CL7     DATE DATA SET LAST REFERENCED
+KVATTRS  DS    X       ATTRIBUTES --
+KVLASTV  EQU   X'80'     LAST VOLUME OF DATA SET (NOT RELIABLE)
+KVSECBIT EQU   X'54'     ALL SECURITY BITS
+KVRACF   EQU   X'40'     DATA SET PROTECTED BY RACF
+KVFULL   EQU   X'10'     DATA SET PROTECTED FROM READ BY PASSWORD
+KVWRITE  EQU   X'04'     DATA SET PROTECTED FROM WRITE BY PASSWORD
+KVKEYLEN DS    H       KEY LENGTH OF DATA SET
+KVALLTYP DS    C       UNITS OF ALLOCATION IN ORIGINAL DATA SET
+*                      A -- ABSOLUTE TRACK, NO SECONDARY ALLOCATION
+*                      B -- BLOCK LENGTH
+*                      T -- TRACKS
+*                      C -- CYLINDERS
+*                (BLANK) -- BYTES      KVSECALL IS IN BYTE UNITS
+*                      K -- KILO-BYTES  IF KVALLTYP IS BLANK, K,
+*                      M -- MEGA-BYTES   OR M
+         SPACE 3
+         ORG   KRECORD
+KRZEROS  DS    XL2'0'  SET TO X'0000'
+KRVOLS   DS    H       NUMBER OF VOLUMES PROCESSED
+KRSERRS  DS    H       NUMBER OF VOLUMES WITH "SEVERE" ERRORS
+KRMERRS  DS    H       NUMBER OF VOLUMES WITH "MINOR" ERRORS
+KRSTART  DS    0CL15   START DATE AND TIME
+KRSDATE  DS    CL7     START DATE
+KRSTIME  DS    CL8     START TIME (HHMMSSTH)
+KREND    DS    0CL15   END DATE AND TIME (OF VTOC SCAN)
+KREDATE  DS    CL7     END DATE
+KRETIME  DS    CL8     END TIME (HHMMSSTH)
+         ORG   KRECORD+44
+KRTYPE   DS    C       SET TO C'R' TO INDICATE RUN STATISTICS
+KRSDATEG DS    CL8                 START DATE IN YYYYMMDD FORMAT   V4L8
+         ORG   ,       DEFINE HIGHEST POINT IN DSECT
+KLRECL   EQU   *-KRECORD LENGTH OF LONGEST RECORD
+         SPACE 1
+SAVEDSCB DSECT
+SAVENEXT DS    A
+SAVE     DS    XL(DSCBSIZE),0D
+SAVESIZE EQU   *-SAVEDSCB
+         SPACE 1
+ADSN     DSECT
+ADNEXT   DS    A
+ADSNAME  DS    CL44
+ADSALLOC DS    F
+ADSUSED  DS    F
+ADSORG   DS    AL2
+ADSTRBAL DS    AL2
+ALRECL   DS    H
+ABLKSIZE DS    H
+ANOEPVX  DS    H
+AOPTCD   DS    X
+ARECFM   DS    BL1
+ANOEPV   DS    AL1
+ACREDT   DS    XL3
+AEXPDT   DS    XL3
+AREFD    DS    XL3
+AADDR    DS    XL8
+AFLAGS   DS    AL1
+AVTOC    EQU   X'80'
+AFREESP  EQU   X'88'
+ASMSFG   DS    AL1
+ADSLSTAR DS    AL3
+AF3PTR   DS    XL5,0D
+ADSIZE   EQU   *-ADSN
+         SPACE 1
+XT       DSECT                     DASD extent
+XTNEXT   DS    A                   -> next XT
+XTTT     DS    F                   "True track" of start of extent
+XTTRACKS DS    F                   Tracxk in extent
+XTADSN   DS    A                   -> ADSN that owns the extent
+XTSOURCE DS    XL5                 Address of DSCB containing data
+XTFLAG   DS    CL3                 Error flag
+XTSIZE   EQU   *-XT                Size of the XT
+         SPACE 1
+VOL      DSECT
+VNEXT    DS    A
+VUNAME   DS    CL8
+VUTYPE   DS    BL4
+VCYLSIZE DS    H
+VSER     DS    CL6,0D
+VSIZE    EQU   *-VOL
+         POP   PRINT
+         EJECT
+DISKLIST RSECT                     Return to program CSECT
+DISKLIST AMODE 31                  Define program AMODE
+DISKLIST RMODE 24                  Define program RMODE
+         USING DKLDATA,11          Establish data area addressability
+         USING *,12                Establish program addressability
+         SAVE  (14,12),,'DISKLIST V5 &SYSDATE &SYSTIME Copyright (c) 20>
+               15 J. Stephen Myers'  Save registers
+         LR    12,15               Prepare program base register
+         BAS   11,*+L'*+4          Br around data area address
+         DC    AL4(DKLDATA)        Data area address
+         L     11,0(,11)           Load data area base register
+         LA    15,SAVEAREA         Compute new save area address
+         ST    13,4(,15)           Add new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish new save area pointer
+         L     2,0(,1)             Load address of parm text
+         BAS   14,INITHDR          Initialize the page header
+         LA    1,OPARM01           Open SYSPRINT
+         BAS   14,OPENLIST
+         LTR   15,15               Open OK?
+         BNZ   EXIT                Br if not
+         LA    1,OPARM03           Load adder of an OPEN parm list
+         BAS   14,TESTDD           Use TESTDD to see if the SYSUTX DD ->
+                                    statement is present
+         LTR   15,15               SYSUTX DD statement present?
+         BNZ   *+L'*+4             Br if not
+         BAS   14,OPENLIST         Open SYSUTX
+         BRAS  14,PARMSCAN         Scan the parameter text
+         XC    SCANWORK,SCANWORK   Reset the UCBSCAN work area
+* Get a new DASD UCB
+NEXTVOL  UCBSCAN MF=(E,SCANPL),UCBAREA=SCANUCB,DYNAMIC=YES,RANGE=ALL, ->
+               DEVCLASS=DASD,WORKAREA=SCANWORK
+         LTR   15,15               EOF or error?
+         BNZ   SORTVOL             Br if so
+         TM    UCBSTAT-UCBOB+SCANUCB,UCBONLI  UCB online?
+         BZ    NEXTVOL                        Br if not
+         TM    UCBVOLI-UCBOB+SCANUCB,255-C' ' Vol ser in UCB?
+         BZ    NEXTVOL                        Br if not
+         LA    9,MASKLIST          Load addr of a dummy selection mask
+SV0100   ICM   9,B'1111',0(9)      Load addr of next selection mask
+         BZ    NEXTVOL             Br if all done
+         LA    0,6                 Set reg 0 = 6
+         LA    1,4(,9)             Set reg 1 - start of mask
+         LA    14,UCBVOLI-UCBOB+SCANUCB  Set reg 14 = start of vol ser
+SV0200   CLI   0(1),C'*'           End of mask?
+         BE    SV0500              Br if so
+         CLI   0(1),C'%'           Any character?
+         BE    SV0400              Br if so
+         CLI   0(1),C'#'           Numeric character?
+         BNE   SV0300              Br if not
+         CLI   0(14),C'0'          Numeric in vol ser?
+         BL    SV0100              Br if not
+         CLI   0(14),C'9'          Numeric in vol ser
+         BH    SV0100              Br if not
+         B     SV0400              Character OK
+SV0300   CLC   0(1,14),0(1)        Test character
+         BNE   SV0100              Br if not a match
+SV0400   LA    1,1(,1)             Update the mask pointer
+         LA    14,1(,14)           Update the volume serial pointer
+         BCT   0,SV0200            Br if more characters to test
+SV0500   LA    0,VSIZE             Allocate a VOL
+         GETMAIN  RU,LV=(0),LOC=(31,ANY)
+         MVC   VNEXT-VOL(,1),VLIST Add the VOL to the vol list
+         ST    1,VLIST
+         MVC   VSER-VOL(,1),UCBVOLI-UCBOB+SCANUCB
+SV0600   L     2,CVTPTR            Load addr of the CVT
+         L     2,CVTZDTAB-CVTMAP(,2)  Load addr of the device         ->
+                                       characteristics table
+         SR    15,15               Set reg 15 = 0
+         IC    15,UCBTBYT4-UCBOB+SCANUCB  Load device type
+         IC    15,0(15,2)          Load offset of the device          ->
+                                    characteristics
+         LA    15,0(15,2)          Compute address of the devices     ->
+                                    characteristics
+         MVC   VCYLSIZE-VOL(,1),DVCTRK-DVCT(15)  Save tracks / cylinder
+         LR    2,1
+         NI    (UCBTBYT2-UCBOB)+SCANUCB,255-X'20'  Remove shared      ->
+                                                    DASD attribute
+         EDTINFO RTNUNIT,                      Convert                ->
+               DEVTYPE=UCBTYP-UCBOB+SCANUCB,    device type to        ->
+               OUTUNIT=VUNAME-VOL(2),            unit name            ->
+               MF=(E,FMTWORK,COMPLETE)
+         LTR   15,15
+         BZ    *+L'*+2
+         DC    H'0'
+         MVC   VUTYPE-VOL(,2),(UCBTYP-UCBOB)+SCANUCB
+         B     NEXTVOL
+SORTVOL  ICM   0,B'1111',VLIST     Test if any volumes
+         BNZ   SORTV
+         LA    1,FMT05             Issue no volumes found msg
+         BAS   14,FMTLINE
+         B     EXIT
+SORTV    L     15,=V(QSORTL)       Sort the volume list
+         CALL  (15),MF=(E,SORTPARM1)
+         TIME  DEC
+         STM   0,1,STARTTIM
+         TIMEUSED STORADR=STARTTM,CPU=MIC,LINKAGE=SYSTEM  Save the    ->
+                                                           start time
+SCANVOL  ICM   2,B'1111',VLIST     Load addr of the next VOL
+         BZ    EXIT                Br if none left
+         LA    0,1                 Update
+         A     0,VCOUNT             VCOUNT
+         ST    0,VCOUNT
+         MVC   UNITNAME,VUNAME-VOL(2)  Save unit name and
+         MVC   UTYPE,VUTYPE-VOL(2)      device type
+         MVC   DYNWORK(AL),A       Allocate the volume
+         MVC   AVOL-A+DYNWORK,VSER-VOL(2)
+         LA    1,DYNWORK
+         BRAS  14,DYNALLOC
+         LTR   15,15
+         BNZ   FREEVOL
+         BAS   14,INITHDR          Initialize the page header
+         MVC   DCBDDNAM-IHADCB+VTOCDCB,ADDN-A+DYNWORK  Open the VTOC
+         MVC   CYLSIZE,VCYLSIZE-VOL(2)
+         RDJFCB MF=(E,OPARM02)
+         MVI   JFCBDSNM,X'04'
+         MVC   JFCBDSNM+1(L'JFCBDSNM-1),JFCBDSNM
+         OI    JFCBTSDM,JFCNWRIT
+         OPEN  MF=(E,OPARM02),TYPE=J
+         SR    0,0
+         ST    0,DSCBCNT
+         ST    0,F0DSCB
+         LA    1,SUBHDR1           Prepare the data set list sub header
+         ST    1,SUBHDR
+         L     1,0(,1)
+         MVC   HDR1VOL-HDRTXT1(,1),AVOL-A+DYNWORK
+         SR    0,0                 Obtain the CCHHR to read the VTOC
+         L     1,DCBDEBAD-IHADCB+VTOCDCB
+         N     1,=A(X'FFFFFF')
+         LA    2,VTOCSEEK
+         L     15,CVTPTR
+         L     15,CVTPCNVT-CVTMAP(,15)
+         STM   8,13,12(13)
+         LR    8,13
+         CALL  (15)
+         LM    8,13,12(8)
+         LTR   15,15
+         BZ    *+L'*+2
+         DC    H'0'                Oops!
+NEXTBLK  MVI   VTOCECB,0           Read the VTOC
+         EXCP  VTOCIOB
+         WAIT  1,ECB=VTOCECB
+         L     5,VTOCIOB+8
+         N     5,=A(X'FFFFFF')     Obtain the addr of the last CCW
+         AHI   5,-8
+         CLI   VTOCECB,X'7F'       Test ECB completion status
+         BE    IOOK                Br if OK
+         CLI   VTOCECB,X'42'       Test if extent issue
+         BE    XERR                Br if so
+* Generate the "standard" error message, though the disk address in
+* the message may be misleading.
+         SYNADAF ACSMETH=EXCP,PARM1=VTOCIOB   Generate I/O error msg
+* Reg 1 points to a BSAM style I/O buffer, e.g. a BDW followed by
+* an RDW
+*                            0----+----1
+         MVC   8(20,1),=CL20' I/O ERROR'  Insert my message over      ->
+                                           SYNADAF garbage
+         MVC   8+11(L'AVOL,1),(AVOL-A)+DYNWORK  Add the volume
+* Save the SYNADAF message.  We do this because our save area
+* convention has been damaged by SYNADAF.
+         LA    0,4(,1)             Compute the address of the message
+         LH    1,4(,1)             Load the mag length from the RDW
+         LA    14,FMTWORK          Stash the message in FMTWORK
+         LR    15,1
+         MVCL  14,0
+         LA    1,MAJOR             Add volume to major error list
+         BAS   14,ADDMM
+         SYNADRLS ,                Release the SYNAD message area,    ->
+                                    and restore our reg 13
+         LA    1,FMTWORK           Write the updated SYNADAF message
+         BRAS  14,OUTEDIT
+         B     VTOCEOF             Abandon the volume
+XERR     AHI   5,-8
+IOOK     L     4,VTOCIOB+16        Load addr of the first CCW
+         N     4,=A(X'FFFFFF')
+         LA    4,16(,4)            Compute addr of first read CCW
+         CR    4,5                 Test if problem
+         BH    VTOCEOF             Br if so
+* REGISTER USAGE
+*     4    CURRENT CCW ADDRESS
+*     5    ADDRESS OF LAST VALID CCW
+*     9    ADDRESS OF CURRENT DSCB
+SCANCCWS L     9,0(,4)             Load DSCB address from the CCW
+         N     9,=A(X'FFFFFF')
+         USING DSCB,9
+         LA    0,1                 Update
+         A     0,DSCBCNT            number of
+         ST    0,DSCBCNT             DSCBs
+         CLI   DS1FMTID,0          Formst 0 DSCB?
+         BNE   TESTF1              Br if not
+         LA    0,1                 Update
+         A     0,F0DSCB             number of
+         ST    0,F0DSCB              Format 0 DSCBs
+         B     NEXTCCW
+TESTF1   CLI   DS1FMTID,C'1'       Test if Format 1 DSCB
+         BNE   TESTF3              Br if not
+         LA    0,ADSIZE            Obtain an ADSN
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         LR    10,1
+         USING ADSN,10
+         MVC   ADNEXT,DSLIST       Add the ADSN to DSLIST
+         ST    1,DSLIST
+         MVC   ADSNAME,DS1DSNAM    Init the ADSN
+         MVC   ACREDT,DS1CREDT
+         MVC   AEXPDT,DS1EXPDT
+         MVC   AREFD,DS1REFD
+         XC    ADSALLOC,ADSALLOC
+         XC    ADSUSED,ADSUSED
+         MVC   ADSORG,DS1DSORG
+         MVC   ARECFM,DS1RECFM
+         MVC   ALRECL,DS1LRECL
+         MVC   ABLKSIZE,DS1BLKL
+         MVC   AF3PTR,DS1PTRDS
+         SR    0,0
+         IC    0,DS1NOEPV
+         STH   0,ANOEPVX
+         MVC   ADSLSTAR,DS1LSTAR
+         MVC   ASMSFG,DS1SMSFG
+         MVC   ADSTRBAL,DS1TRBAL
+         MVI   AFLAGS,0
+         MVC   AADDR,COUNT
+         LA    2,3
+         SR    3,3
+         ICM   3,B'0001',DS1NOEPV  Load extents
+         BZ    SKIPSPC             Br if no extents
+         SR    0,0                 Set initial allocated space
+         LA    1,DS1EXT1
+         MVC   DATE1,COUNT
+         BAS   14,SPACE            Compute allocates space
+         ST    0,ADSALLOC          Save allocated space
+SKIPSPC  STC   3,ANOEPV
+         B     NEXTCCW
+TESTF3   CLI   DS1FMTID,C'4'       Test if Formst 4 DSCB
+         BNE   NOTF4               Br if not
+         LA    0,ADSIZE            Get ADSN for the VTOC
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         LR    10,1
+         XC    0(ADSIZE,1),0(1)
+         ST    1,VTOCDS
+         MVC   ADSNAME,=CL44'VTOC'
+         MVC   ANOEPV,DS1NOEPV
+         SR    0,0
+         IC    0,DS1NOEPV
+         STH   0,ANOEPVX
+         MVI   AFLAGS,AVTOC
+         SR    3,3                 Compute allocated space for the VTOC
+         IC    3,DS1NOEPV
+         LA    2,1
+         SR    0,0
+         LA    1,DS4VTOCE
+         MVC   DATE1,COUNT
+         BAS   14,SPACE
+         STC   3,ANOEPV
+         ST    0,ADSALLOC
+         ST    0,ADSUSED
+         MVC   AADDR,COUNT
+         LA    0,ADSIZE            Get ADSN for free space
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         LR    10,1
+         XC    0(ADSIZE,1),0(1)
+         ST    1,FREESPDS
+         MVC   ADSNAME,=CL44'FREE SPACE * * *'
+         MVI   AFLAGS,AFREESP
+         MVC   VTOCI,DS4VTOCI      Save DS4VTOCI
+         MVC   EFLVL,DS4EFLVL      Save DS4EFLVL
+         MVC   EFPTR,DS4EFPTR      Save DS4EFPTR
+         MVC   DEVDT,DS4DEVDT      Save DS3DEVDT
+         TM    DS4VTOCI,DS4IVTOC+DS4DOSBT  Test if indexed VTOC
+         BNO   NEXTCCW             Br if not
+         STM   3,5,FMTWORK         Save regs 3 to 5
+*        XC    DT2X7NF0,DT2X7NF0   Init data areas to use CVAFDSM  P001
+*        XC    DT2X7CSR,DT2X7CSR    to obtain free space data      P001
+         XC    DT2X7FLG(DT2ENTRY-DT2X7FLG),DT2X7FLG                P001
+         LHI   0,DT2MEN
+         ST    0,DT2X7ENT
+         LA    14,DT2ENTRY         Load addr of the map entries
+         LHI   15,L'DT2ENTRY       Load the length of the map entries
+         SR    1,1                 Set reg 1 = 0
+         MVCL  14,0                Clear the map entries
+FREESP100 DC   0H'0'                                               P001
+         L     2,(DCBDEBAD-IHADCB)+VTOCDCB  Load address of the DEB
+         N     2,=A(X'FFFFFF')     Isolate the 24-bit DEB address
+         CVAFDSM ACCESS=MAPDATA,MAP=VOLUME,EXTENTS=XMAP,RTA4BYTE=YES, ->
+               COUNT=NO,DEB=(2),MF=(E,DSMPARM) Get the space map   P001
+         LTR   7,15                Copy the return code to reg 7
+         BZ    SCANFREE            Br if RC = 0
+         CHI   15,4                Test the return code
+         BNE   FREESP300           Br if real error
+         CLI   (CVSTAT-CVPL)+DSMPARM,31  Bad starting RBA?         P001
+         BNE   FREESP200           Br if not                       P001
+         LM    3,5,FMTWORK         Restore regs 3 through 5        P001
+         B     NEXTCCW                                             P001
+FREESP200 CLI  (CVSTAT-CVPL)+DSMPARM,32  Test if EOF               P001
+         BE    SCANFREE            Br if EOF
+         LM    3,5,FMTWORK         Restore regs 3 through 5        P001
+         B     NEXTCCW                                             P001
+FREESP300 LM   3,5,FMTWORK         Restore regs 3 through 5
+         LA    1,FMT12             Write a diagnostic
+         BAS   14,FMTLINE
+         LA    1,MAJOR             Add volume to major error list
+         BAS   14,ADDMM
+         B     NEXTCCW
+SCANFREE L     2,FREESPDS          Load addr of the free space ADSN
+         LHI   3,DT2MEN            Load number of map entries
+         LA    4,DT2ENTRY          Load addr of the first free        ->
+                                    space element
+NEXTDT   OC    0(8,4),0(4)         Test if data
+         BZ    TESTDSMR            Br if no data
+         LM    5,6,0(4)            Load the element
+         STCM  6,B'1111',DT2ENTRY  Update restart point
+         SR    6,5                 Compute tracks in extent
+         L     0,ADSALLOC-ADSN(,2) Load total free space tracks
+         AR    0,6                 Add tracks in this extent
+         ST    0,ADSALLOC-ADSN(,2) Update total free space tracks
+         LA    0,1                 Update
+         AH    0,ANOEPVX-ADSN(,2)   free space
+         STH   0,ANOEPVX-ADSN(,2)    extents
+         LA    0,XTSIZE            Allocate an extent entry
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         MVC   XTNEXT-XT(,1),XTLIST  Add the entry to the
+         ST    1,XTLIST               extent list
+         ST    5,XTTT-XT(,1)       Store the RTA
+         ST    6,XTTRACKS-XT(,1)   Store the calculated size
+         XC    XTSOURCE-XT(,1),XTSOURCE-XT(1)  Indicate the source is ->
+                                                the VTOC index
+         ST    2,XTADSN-XT(,1)     Save the address of the free       ->
+                                    sppace ADSN
+         AHI   4,8                 Compute addr of the next free      ->
+                                    apace entry
+         BCT   3,NEXTDT            Go process it
+TESTDSMR LTR   7,7                 Test the CVAFDSM RC
+         BNZ   FREESP400           Br if done
+         LA    14,DT2ENTRY+4       Load addr of the map entries
+         LHI   15,L'DT2ENTRY-4     Load the length of the map entries
+         SR    1,1                 Set reg 1 = 0
+         MVCL  14,0                Clear the map entries
+         B     FREESP100
+FREESP400 LM   3,5,FMTWORK
+         B     NEXTCCW
+         DROP  10
+NOTF4    CLI   DS1FMTID,C'7'
+         BE    F7
+         CLI   DS1FMTID,C'5'
+         BNE   NOTF5
+F7       LA    0,SAVESIZE
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         MVC   SAVENEXT-SAVEDSCB(,1),F5F7LIST
+         ST    1,F5F7LIST
+         MVC   SAVE-SAVEDSCB(,1),DSCB
+         B     NEXTCCW
+NOTF5    CLI   DS1FMTID,C'2'
+         BL    NEXTCCW
+         CLI   DS1FMTID,C'3'
+         BH    NEXTCCW
+         LA    0,SAVESIZE          Save a format 2 or 3 DSCB
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         USING SAVEDSCB,1
+         MVC   SAVENEXT,F3LIST
+         ST    1,F3LIST
+         MVC   SAVE,DSCB
+         DROP  1
+NEXTCCW  MVC   VTOCSEEK+3(5),COUNT Save DSCB address to resume the I/O
+         AHI   4,8                 Compute addr of the next CCW
+         CR    4,5                 Last CCW?
+         BNH   SCANCCWS            Br if not
+         CLI   VTOCECB,X'7F'       Test if last I/O OK?
+         BE    NEXTBLK             Br if so
+VTOCEOF  CLOSE MF=(E,CPARM02)      Close the VTOC
+         MVC   DYNWORK(UL),U       Unallocate the volume
+         MVC   UDDN-U+DYNWORK,DCBDDNAM-IHADCB+VTOCDCB
+         LA    1,DYNWORK
+         BRAS  14,DYNALLOC
+         ICM   6,B'1111',VTOCDS
+         BNZ   CHECKF4
+         DC    H'0'                Oops
+CHECKF4  SR    15,15
+         SR    0,0
+         IC    15,DEVDT            Load DS4DEVDT
+         SR    0,0
+         L     1,F0DSCB            Compute whole tracks of free DSCBs
+         DR    0,15
+         L     2,ADSALLOC-ADSN(,6) Load allocated tracks
+         SR    2,1                 Compute estimate of used tracks
+         ST    2,ADSUSED-ADSN(,6)  Store in ADSN
+         TM    VTOCI,DS4IVTOC+DS4DOSBT  Indexed VTOC?
+         BO    INDEXED             Br if so
+         SR    0,0
+         CLI   EFLVL,DS4EFL07      Format 7 free space?
+         BE    FMT7                Br if so
+         MVC   12(8,13),AADDR-ADSN(6)   Save the CCHHR of the         ->
+                                         Format 4 DSCB
+         MVI   12+4(13),X'02'      Change the R to 02
+         LA    2,F5F7LIST-(SAVENEXT-SAVEDSCB)  Prepare to find the    ->
+                                                first F5 DSCB
+         LA    15,12(,13)          Load addr of the CCHHR
+SCANF5   ICM   2,B'1111',SAVENEXT-SAVEDSCB(2)  Load addr of the       ->
+                                                next DSCB
+         BZ    INDEXED             Br if not end of chain
+         CLC   (COUNT-DSCB)+(SAVE-SAVEDSCB)(5,2),0(15)  Found it?
+         BNE   SCANF5                                   Not this DSCB
+         CLI   (DS1FMTID-DSCB)+(SAVE-SAVEDSCB)(2),C'5' Format 5?
+         BNE   F5ERR                                    Not this DSCB
+         CLC   (DS5KEYID-DSCB)+(SAVE-SAVEDSCB)(,2),=4X'05'  Valid DSCB?
+         BE    CHECKF5                                       Yes
+F5ERR    LA    1,FMT13
+         BAS   14,FMTLINE
+         LA    1,MAJOR
+         BAS   14,ADDMM
+         B     INDEXED
+CHECKF5  LA    3,40/5              Load number of extent entries
+         LA    4,(DS5AVEXT-DSCB)+(SAVE-SAVEDSCB)(,2)  Load addr of    ->
+                                                       first extent
+         BAS   14,F5EXT            Scan them
+         B     INDEXED             All extents checked
+         LA    4,(DS5MAVET-DSCB)+(SAVE-SAVEDSCB)(,2)  Load addr of    ->
+                                                       next extent
+         LA    3,90/5              Load number of extent entries
+         BAS   14,F5EXT            Scan them
+         B     INDEXED             All extents checked
+         OC    (DS5PTRDS-DSCB)+(SAVE-SAVEDSCB)(,2),(DS5PTRDS-DSCB)+(SAV>
+               E-SAVEDSCB)(2)      More DSCBs?
+         BZ    INDEXED             Br if not
+         LA    15,(DS5PTRDS-DSCB)+(SAVE-SAVEDSCB)(,2)
+         LA    2,F5F7LIST-(SAVENEXT-SAVEDSCB)
+         B     SCANF5
+FMT7     LA    15,EFPTR            Load addr of CCHHR of the first    ->
+                                   Format 7 DSCB
+         LA    2,F5F7LIST-(SAVENEXT-SAVEDSCB)
+SCANF7   ICM   2,B'1111',SAVENEXT-SAVEDSCB(2)  Load addr of the next  ->
+                                                DSCB
+         BZ    INDEXED             Oops
+         CLC   (COUNT-DSCB)+(SAVE-SAVEDSCB)(L'EFPTR,2),0(15)  Found?
+         BNE   SCANF7                                         Br if not
+         CLI   (DS1FMTID-DSCB)+(SAVE-SAVEDSCB)(2),C'7'  Format 7 DSCB?
+         BNE   SCANF7              Br if not
+         CLC   (DS7KEYID-DSCB)+(SAVE-SAVEDSCB)(,2),=4X'07'  Valid?
+         BNE   SCANF7                                       No
+         LA    3,L'DS7EXTNT/8      Load number of entries
+         LA    4,(DS7EXTNT-DSCB)+(SAVE-SAVEDSCB)(,2)  Load addr of    ->
+                                                       first extent
+         BAS   14,F7EXT            Analyze the extents
+         B     INDEXED             All  extents processed
+         LA    3,L'DS7ADEXT/8      Load number of entries
+         LA    4,(DS7ADEXT-DSCB)+(SAVE-SAVEDSCB)(,2)  Load addr of    ->
+                                                       first extent
+         BAS   14,F7EXT            Analyze the extents
+         B     INDEXED             All extents processed
+         OC    (DS7PTRDS-DSCB)+(SAVE-SAVEDSCB)(,2),(DS7PTRDS-DSCB)+(SAV>
+               E-SAVEDSCB)(2)      More Format 7 DSCBs?
+         BZ    INDEXED             Br if not
+         LA    15,(DS7PTRDS-DSCB)+(SAVE-SAVEDSCB)(,2)  Load addr
+         LA    2,F5F7LIST-(SAVENEXT-SAVEDSCB)  Load start of chain
+         B     SCANF7
+INDEXED  LA    10,DSLIST-(ADNEXT-ADSN)  Now get additional allocated  ->
+                                         space
+         USING ADSN,10
+GETSPACE ICM   10,B'1111',ADNEXT   Load addr of next ADSN
+         BZ    RPT0100
+         OC    AF3PTR,AF3PTR       Test if there is a DSCB chain
+         BZ    GETSPACE            Br if not
+         SR    3,3                 Load remaining extents
+         ICM   3,B'0001',ANOEPV
+         BZ    GETSPACE
+         LA    1,AF3PTR            Find DSCB
+NEXTF3   BAS   14,FINDF3
+         LTR   1,1                 Found?
+         BNZ   CHKDSCB             Br if so
+         B     F3ERR               Oops
+CHKDSCB  CLI   (DS1FMTID-DSCB)+(SAVE-SAVEDSCB)(1),C'3'
+         BE    F3DSCB
+         CLI   (DS1FMTID-DSCB)+(SAVE-SAVEDSCB)(1),C'2'
+         BE    *+L'*+2
+         DC    H'0'                Not F2/F3 DSCB
+         DC    H'0'                We won't process F2 DSCBs - yet
+F3DSCB   CLC   (DS3KEYID-DSCB)+(SAVE-SAVEDSCB)(,1),=4X'03'
+         BE    F3OK
+F3ERR    LA    1,FMT14             Oops, bad F3 DSCB
+         BAS   14,FMTLINE
+         LA    1,MAJOR
+         BAS   14,ADDMM
+         B     GETSPACE
+F3OK     LR    4,1
+         L     0,ADSALLOC          Compute allocated space for the
+         LA    1,(DS3EXTNT-DSCB)+(SAVE-SAVEDSCB)(,4)  extents defined
+         LA    2,4                  in the key area of the DSCB
+         BAS   14,SPACE
+         ST    0,ADSALLOC
+         STC   3,ANOEPV
+         LTR   3,3                 Test if there are more extents
+         BZ    GETSPACE            Br if not
+         LA    1,(DS3ADEXT-DSCB)+(SAVE-SAVEDSCB)(,4)  Compute allocated
+         LA    2,9                  space for the extents defined in
+         BAS   14,SPACE              data area of the DSCB
+         STC   3,ANOEPV
+         ST    0,ADSALLOC
+         LTR   3,3                 Any more extents?
+         BZ    GETSPACE            No
+         OC    (DS3PTRDS-DSCB)+(SAVE-SAVEDSCB)(,4),(DS3PTRDS-DSCB)+(SAV>
+               E-SAVEDSCB)(4)      Any more F3 DSCBs?
+         BNZ   *+L'*+2             Br if so
+         DC    H'0'                Oops
+         LA    1,(DS3PTRDS-DSCB)+(SAVE-SAVEDSCB)(,4)  Go do them
+         B     NEXTF3
+RPT0100  L     15,=V(QSORTL)       Sort the ADSNs ny data set name
+         CALL  (15),MF=(E,SORTPARM2)
+         ICM   15,B'1111',VTOCDS   Load the address of the VTOC ADSN
+         BZ    RPT0400             Br if none
+         XC    VTOCDS,VTOCDS       Clear VTOCDS
+         ICM   14,B'1111',FREESPDS Load the address of the free       ->
+                                    space ADSN
+         BZ    RPT0200             Br if no free space ADSN
+         XC    FREESPDS,FREESPDS   Clear the pointer
+         ST    14,ADNEXT-ADSN(,15) Add the free space ADSN to the chain
+         MVC   ADNEXT-ADSN(,14),DSLIST
+         B     RPT0300
+RPT0200  MVC   ADNEXT-ADSN(,15),DSLIST  Insert the VTOC ADSN
+RPT0300  ST    15,DSLIST
+RPT0400  LA    10,DSLIST-(ADNEXT-ADSN)  Load addr of a dummy ADSN
+         MVI   CC,C'1'             Set the carriage control character
+RPT0500  ICM   10,B'1111',ADNEXT   Load addr of the next ADSN
+         BZ    RPT0900             Br if end of chain
+         LA    0,DATE1             Convert creation date to mm/dd/yy
+         LA    1,ACREDT
+         BRAS  14,CNVTDATE
+         LA    1,AREFD             Convert reference date to mm/dd/yy
+         LA    0,DATE2
+         BRAS  14,CNVTDATE
+         LA    1,AEXPDT            Convert expiation date to mm/dd/yy
+         LA    0,DATE3
+         BRAS  14,CNVTDATE
+         CLI   AFLAGS,0            "Special" ADSN
+         BNE   RPT0600             Br if so
+         SR    0,0                 Compute tracks used
+         ICM   0,B'0111',ADSLSTAR
+         SRA   0,8
+         TM    ADSLSTAR+2,X'FF'
+         BZ    *+L'*+4
+         AHI   0,1
+         ST    0,ADSUSED
+RPT0600  LA    1,FMT02             Load addr of the regular format
+         CLI   AFLAGS,0            Test if special ADSN
+         BE    RPT0700             Br if not
+         LA    1,FMT03             Use the special format
+         CLI   AFLAGS,AVTOC        Test if the VTOC
+         BNE   RPT0700             Br if not
+         LA    1,FMT15             Use the special format for the VTOC
+RPT0700  LA    0,FMTWORK           Load addr of the MINIFMT work area
+         L     15,=V(MINIFMT)      Load addr of MINIFMT
+         CALL  (15)                Prepare the output line
+         CLC   ADSORG,=AL1(DCBDSGPO,0)  Test if DSORG=PO
+         BNE   RPT0800             Br if not
+         TM    ASMSFG,DS1PDSE      Test if PDSE
+         BZ    RPT0800             Br if not
+         MVI   26(1),C'E'          Change C'PO ' to C'POE' in the line
+RPT0800  BRAS  14,OUTEDIT          Now write the line
+         MVI   CC,C' '             Reset the carriage control
+         CLI   AFLAGS,0            "Special" data set?
+         BNE   RPT0500             Br if so
+         TM    (DCBOFLGS-IHADCB)+SYSUTX,DCBOFOPN  SYSUTX open?
+         BZ    RPT0500             Br if not
+         BRAS  14,GENUTX           Generate a SYSUTX record
+         B     RPT0500             Go do the next ADSN
+         DROP  10
+RPT0900  ICM   1,B'1111',F3LIST    Free the format 3 DSCBs
+         BZ    RPT1000
+         MVC   F3LIST,SAVENEXT-SAVEDSCB(1)
+         LA    0,SAVESIZE
+         FREEMAIN  RU,LV=(0),A=(1)
+         B     RPT0900
+RPT1000  L     15,=V(QSORTL)       Sort the extent list by address
+         CALL  (15),MF=(E,SORTPARM3)
+         USING XT,10
+* Scan through the extents to find issues
+         LA    10,XTLIST-(XTNEXT-XT)
+         LA    2,1                 Set initial expected address
+         SR    8,8
+         NI    VFLAGS,255-VERR     Reset VERR
+RPT1100  ICM   10,B'1111',XTNEXT   Load addr of the next extent
+         BZ    RPT1600             Br if none
+         SR    0,0                 Set reg 0 = 0
+         LA    1,=CL3' '           Load addr of the error flags
+         C     2,XTTT              Compare expected extent addr       ->
+                                    with actual extent addr
+         BE    RPT1200             Br if OK
+         OI    VFLAGS,VERR
+         LA    0,MINOR
+         LA    1,=CL3' *'          Reset error flags address
+         BL    RPT1200             Br if missing space
+         LA    0,MAJOR
+         LA    1,=CL3'***'         Overlapping space, reset address
+RPT1200  STM   0,1,64(13)          Save regs 0 and 1
+         LTR   1,0                 Test if error
+         BZ    RPT1300             Br if none
+         BAS   14,ADDMM            Add volume
+RPT1300  LM    0,1,64(13)          Restore regs 0 and 1
+         MVC   XTFLAG,0(1)         Store the update flags
+         TM    OPTION,EXTMAP       EXTMAP option?
+         BO    RPT1400             Br if so
+         TM    VFLAGS,VERR         Test if extent error detected
+         BZ    RPT1900             Br if not
+RPT1400  LA    0,SUBHDR2           Reset the sub headings
+         ST    0,SUBHDR
+RPT1500  L     2,XTTT              Compute expected address of the
+         A     2,XTTRACKS           next extent
+         A     8,XTTRACKS          Update known tracks
+         B     RPT1100             Go check the next extent
+         USING ADSN,9
+RPT1600  MVI   CC,C'1'             Set the carriage control
+RPT1700  ICM   10,B'1111',XTLIST   Load address of the next extent
+         BZ    RPT1800             Br if done
+         SR    0,0                 Convert true track to CCHH
+         L     1,XTTT
+         LH    15,CYLSIZE
+         DR    0,15
+         STH   1,DATE1
+         STH   0,DATE1+2
+         L     9,XTADSN            Load address of the ADSN that      ->
+                                    "owns" this extent
+         LA    1,FMT04             Format the extent entry
+         BAS   14,FMTLINE
+         MVI   CC,C' '             Reset the carriage control
+         MVC   XTLIST,XTNEXT       Remove the extent from the list
+         LA    0,XTSIZE            Free the extent
+         FREEMAIN RU,LV=(0),A=(10)
+         B     RPT1700
+         DROP  9,10
+RPT1800  LA    1,FMT08
+         BAS   14,FMTLINE
+         LA    1,FMT09
+         BAS   14,FMTLINE
+         USING ADSN,10
+RPT1900  ICM   10,B'1111',DSLIST   Load addr of the next ADSN
+         BZ    FREEVOL             Br if none left
+         MVC   DSLIST,ADNEXT       Remove the ADSN from the list
+         LA    0,ADSIZE            Free the ADSN
+         FREEMAIN RU,LV=(0),A=(10)
+         B     RPT1900
+         DROP  10
+FREEVOL  L     2,VLIST             Remove the VOL from the list
+         MVC   VLIST,VNEXT-VOL(2)
+         LA    0,VSIZE             Free the VOL
+         FREEMAIN RU,LV=(0),A=(2)
+         ICM   1,B'1111',FREESPDS  Load addr of the free space ADSN
+         BZ    SCANVOL             Br if it is not allocated
+         LA    0,ADSIZE            load the size of an ADSN
+         FREEMAIN RU,LV=(0),A=(1)  Free the free space ADSN
+         XC    FREESPDS,FREESPDS   Clear the ADSN pointer
+         B     SCANVOL
+EXIT     TIME  DEC
+         STM   0,1,STOPTIM
+         XC    SUBHDR,SUBHDR
+         TM    (DCBOFLGS-IHADCB)+PRINT,DCBOFOPN  SYSPRINT OPEN?
+         BZ    X0100                             Br if not
+         LA    0,=C'MAJOR'         List
+         LA    1,MAJOR              volumes
+         BRAS  14,LISTMM             with
+         LA    0,=C'MINOR'            major and
+         LA    1,MINOR                 minor
+         BRAS  14,LISTMM                errors
+         L     2,4(,13)            Load address of the higher save area
+         L     2,24(,2)            Load original register 1
+         L     2,0(,2)             Load address of the parm
+         LH    3,0(,2)             Load length of the PARM text
+         LA    1,FMT06             Load address of the basic format
+         LTR   3,3                 Test the length
+         BZ    *+l'*+4             Br if 0
+         LA    1,FMT07             Load address of the extended format
+         BAS   14,FMTLINE          Prepare and write the PARM= message
+         TIMEUSED STORADR=STOPTM,CPU=MIC,LINKAGE=SYSTEM  Save the     ->
+                                                          end time
+         LG    0,STOPTM            Compute the effective CPU time
+         SG    0,STARTTM
+         STG   0,STOPTM            Store the effective CPU time
+         CVDG  0,CPUTIME           Convert the CPU time to decimal
+         SPACE 1
+* The CPUTIME data area has 31 digits; 25 digits for seconds and 6
+* for the fraction.  Obviously we don't need the entire fraction and
+* we will rarely need more than 1 or 2 digits for seconds.  The
+* edit mask provides 25 digit selects for seconds and 2 digits for
+* the fraction.  The LJUST external function left justifies the
+* edited CPU time and fills the vacated bytes with blanks.  We do
+* not copy the edit mask to a "real" output area since the area
+* is used just once.
+         SPACE 1
+         ED    EDMASK,CPUTIME      Convert the CPU time to digits
+         LA    0,L'EDMASK          Left justify
+         LA    1,EDMASK             the digits
+         L     15,=V(LJUST)
+         CALL  (15)
+         LA    1,FMT99             Print the CPU time
+         BAS   14,FMTLINE
+X0100    TM    (DCBOFLGS-IHADCB)+SYSUTX,DCBOFOPN
+         BZ    X0200
+         BRAS  14,GENUTXR
+X0200    LA    1,CPARM01           Close SYSPRINT and SYSUTX
+         BAS   14,CLOSELST
+X0300    ICM   1,B'1111',MASKLIST  Free the volume mask definitions
+         BZ    X0400
+         MVC   MASKLIST,0(1)
+         LA    0,16
+         FREEMAIN RU,LV=(0),A=(1)
+         B     X0300
+X0400    ICM   1,B'1111',VLIST     Free any VOL entries
+         BZ    X0500
+         MVC   VLIST,VNEXT-VOL(1)
+         LA    0,VSIZE
+         FREEMAIN RU,LV=(0),A=(1)
+         B     X0400
+X0500    ICM   1,B'1111',F5F7LIST
+         BZ    X0600
+         MVC   F5F7LIST,SAVENEXT-SAVEDSCB(1)
+         LA    0,SAVESIZE
+         FREEMAIN RU,LV=(0),A=(1)
+         B     X0500
+X0600    L     13,4(,13)           Load addr of the higher save area
+         RETURN (14,12),T,RC=0     Restore registers & return
+         EJECT
+         CNOP  0,8
+F5EXT    BASR  15,0                Store current address in reg 15
+         SAVE  (14,5),,F5EXT       Save registers
+F5X0100  OC    0(5,4),0(4)         Test if null
+         BNZ   F5X0200             Br if not
+         RETURN 14                 Restore reg 14 & return
+F5X0200  SR    5,5                 Set reg 5 = 0
+         ICM   5,B'0011',2(4)      Load cylinders in extent
+         MH    5,CYLSIZE           Multiply by tracks / cylinder
+         SR    0,0                 Set reg 0 = 0
+         IC    0,4(,4)             Load additional tracks in extent
+         AR    5,0                 Compute total tracks in extent
+         LA    0,XTSIZE            Get storage for an extent
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         MVC   XTNEXT-XT(,1),XTLIST  Add extent to the extent list
+         ST    1,XTLIST
+         SR    0,0                 Set reg 0 = 0
+         ICM   0,B'0011',0(4)      Load TT of start of extent
+         ST    0,XTTT-XT(,1)       Store TT in new extent entry
+         ST    5,XTTRACKS-XT(,1)   Store tracks
+         L     15,FREESPDS         Update free space allocation
+         A     5,ADSALLOC-ADSN(,15)
+         ST    5,ADSALLOC-ADSN(,15)
+         LA    0,1                 Update
+         AH    0,ANOEPVX-ADSN(,15)  number of
+         STH   0,ANOEPVX-ADSN(,15)   extents
+         ST    15,XTADSN-XT(,1)
+         MVC   XTSOURCE-XT(,1),(COUNT-DSCB)+(SAVE-SAVEDSCB)(2)
+         LA    4,5(,4)             Compute addr of next extent entry
+         BCT   3,F5X0100           Analyze it
+         RETURN (14,5)             Restore registers
+         ORG   *-2
+         B     4(,14)              Return to +4
+         EJECT
+         CNOP  0,8
+F7EXT    BASR  15,0                Store current address in reg 15
+         SAVE  (14,5),,F7EXT       Save registers
+F7X0100  OC    0(8,4),0(4)         Null extent entry?
+         BNZ   F7X0200             Br if not
+         RETURN (14,5)             Restore registers & return
+F7X0200  LA    0,XTSIZE            Get storage for an extent
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         L     15,4(,4)            Compute tracks in extent
+         S     15,0(,4)
+         ST    15,XTTRACKS-XT(,1)  Save it
+         MVC   XTTT-XT(,1),0(4)    Copy TT of start of extent
+         MVC   XTNEXT-XT(,1),XTLIST Add extent to extent list
+         ST    1,XTLIST
+         L     14,FREESPDS         Update free space allocation
+         A     5,ADSALLOC-ADSN(,14)
+         ST    5,ADSALLOC-ADSN(,14)
+         LA    0,1                 Update
+         AH    0,ANOEPVX-ADSN(,14)  number of
+         STH   0,ANOEPVX-ADSN(,14)   extents
+         ST    14,XTADSN-XT(,1)
+         MVC   XTSOURCE-XT(,1),(COUNT-DSCB)+(SAVE-SAVEDSCB)(2)
+         LA    4,8(,4)             Compute addr of the next extent
+         BCT   3,F7X0100           Do it
+         RETURN (14,5)             Restore registers
+         ORG   *-2
+         B     4(,14)              Return to +4
+         EJECT
+         CNOP  0,8
+FINDF3   BASR  15,0                Store current address in reg 15
+         SAVE  14,,FINDF3          Save reg 14
+         LR    15,1                Copy F3 address address to reg 15
+         LA    1,F3LIST-(SAVENEXT-SAVEDSCB)  Load dummy SAVEd DSCB addr
+FF30100  ICM   1,B'1111',(SAVENEXT-SAVEDSCB)(1)  Load addr of the     ->
+                                                  next F3 DSCB
+         BZ    FF30200             Not found
+         CLC   (COUNT-DSCB)+(SAVE-SAVEDSCB)(5,1),0(15)  Test if it's  ->
+                                                         right DSCB
+         BNE   FF30100             Br if not
+FF30200  RETURN 14                 Restore reg 14 & return
+         EJECT
+* Compute allocated space in several extents and create a new XT entry
+* for each extent
+*  Entry Register Use
+*           0     Sum of allocated space so far
+*           1     Address of first extent entry
+*           2     Number of extent entries to process
+*           3     Number of extents in data set
+*          13     Save area pointer
+*          14     Return address
+*          15     ---
+*  Exit     0     Sum of allocates space so far
+*           1     Destroyed
+*           2     Destroyed
+*           3     Remaining extents in data set
+*          14     Return address
+*          15     Destroyed
+SPACE    BASR  15,0                Store current address in reg 15
+         SAVE  14,,SPACE           Save register 14
+         STM   4,6,16(13)          Save registers 4 through 6
+SPA0100  LH    14,2(,1)            Load starting CC
+         LH    15,6(,1)            Load ending CC
+         MH    14,CYLSIZE          Convert starting snd ending CC to
+         MH    15,CYLSIZE           true track
+         AH    14,4(,1)            Add atarting and ending HH to
+         AH    15,8(,1)             true track
+         LR    4,14                Copy starting true track to reg 4
+         SR    15,14               Compute tracks in extent
+         AHI   15,1                Add 1
+         LR    5,1                 Copy address of extent entry to R5
+         LR    6,15                Copy tracks in extent to reg 6
+         AR    0,15                Add tracks in extent to total tracks
+         ST    0,28(13)            Save reg 0
+         LA    0,XTSIZE            Load size
+         GETMAIN RU,LV=(0),LOC=(31,ANY)  Get storage for an extent
+         MVC   XTNEXT-XT(,1),XTLIST  Add extent to the
+         ST    1,XTLIST               extent list
+         ST    4,XTTT-XT(,1)
+         ST    6,XTTRACKS-XT(,1)   Save extent size
+         ST    10,XTADSN-XT(,1)    Save address of the ADSN
+         MVC   XTSOURCE-XT(,1),DATE1
+         L     0,28(,13)           Reload reg 0
+         LA    1,10(,5)            Compute addr of the next extent
+         BCT   3,SPA0200           Br if more extents to process
+         LM    4,6,16(13)          Restore regs 4 through 6
+         RETURN 14                 Restore reg 14 & return
+SPA0200  BCT   2,SPA0100           Br if more extents in the group
+         LM    4,6,16(13)          Restore regs 4 through 6
+         RETURN 14                 Restore reg 14 & return
+         EJECT
+         CNOP  0,8
+ADDMM    SAVE  (14,2),,ADDMM       Save registers
+         LR    2,1                 Copy chain header to reg 2
+AMM0100  ICM   1,B'1111',0(1)      Load addr of next volume
+         BZ    AMM0200             Br if not in chain
+         CLC   4(6,1),(AVOL-A)+DYNWORK  Test if volume in chain
+         BNE   AMM0100             Br if not
+         B     AMM0300             Br if so
+AMM0200  LA    0,16                Allocate a new entry
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         MVC   4(6,1),(AVOL-A)+DYNWORK   Copy vol ser to new entry
+         MVC   0(4,1),0(2)         Add entry to chain
+         ST    1,0(,2)
+AMM0300  RETURN (14,2)             Restore registers & return
+         EJECT
+         CNOP  0,8
+INITHDR  BASR  15,0                Store current address in reg 15
+         SAVE  (14,0),,INITHDR     Save registers
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    13,4(,15)           Add new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish new save area pointer
+         LA    0,FMTWORK           Load addr of the MINIFMT work area
+         LA    1,FMT01             Load addr of the format
+         L     15,=V(MINIFMT)      Load addr of the format program
+         CALL  (15)                Format the system date & time
+         LA    0,4(,1)             Compute addr of the date & time text
+         LH    15,0(,1)            Load length of the message
+         AHI   15,-4               Compute length of the next
+         LA    14,PAGEHDR+109-12   Compute addr of date & time in hdr
+         LR    1,15                Copy length to reg 1
+         MVCL  14,0                Copy date & time to the page hdr
+         L     13,4(,13)           Load addr of the higher save area
+         RETURN (14,0),T           Restore registers & return
+         EJECT
+         CNOP  0,8
+TESTDD   BASR  15,0                Store current addr in reg 16
+         SAVE  (14,3),,TESTDD      Save registers
+         LR    2,1                 Copy OPEN parm list addr to reg 2
+         SR    3,3                 Set the return code
+TDD0100  L     1,0(,2)             Load a DCB address
+         N     1,=A(X'FFFFFF')     Isolate the 24-bit DCB address
+         DEVTYPE DCBDDNAM-IHADCB(,1),64(,13)  Test if DD present
+         LTR   15,15               Test DEVTYPE return code
+         JZ    TDD0200             Br if RC = 0
+         LHI   3,4                 Reset my return code
+TDD0200  TM    0(2),X'80'          Test if end of the OPEN parm list
+         LA    2,4(,2)             Compute addr of the next DCB pointer
+         JZ    TDD0100             Br if not end of the OPEN parm list
+         LR    15,3                Copy my return code to reg 15
+         RETURN (14,3),T,RC=(15)   Restore regs & return
+         EJECT
+         CNOP  0,8
+OPENLIST BASR  15,0                Store current address in reg 15
+         SAVE  (14,2),,OPENLIST    Save registers
+         LR    2,1                 Copy parm list addr to reg 2
+         OPEN  MF=(E,(2))          Open the DCBs
+         SR    15,15               Set preliminary return code
+OL0100   L     1,0(,2)             Load a DCB address
+         N     1,=A(X'FFFFFF')     Isolate the 24-bit DCB address
+         TM    DCBOFLGS-IHADCB(1),DCBOFOPN  Test if the DCB is open
+         JO    *+8                 Br if so
+         LHI   15,4                Reset the return code
+         TM    0(2),X'80'          Test if end of the parm list
+         LA    2,4(,2)             Compute addr of the next DCB pointer
+         JZ    OL0100              Br if not end of the parm list
+         RETURN (14,2),T,RC=(15)   Restore regs & return
+         EJECT
+         CNOP  0,8
+CLOSELST BASR  15,0                Store current address in reg 15
+         SAVE  (14,2),,CLOSELST    Save registers
+         LR    2,1                 Copy parm list address to reg 2
+         CLOSE MF=(E,(1))          Close the DCBs
+CL0100   L     1,0(,2)             Load a DCB addr from the parm list
+         N     1,=A(X'FFFFFF')     Isolate the 24-bit DCB address
+         TM    DCBOFLGS-IHADCB(1),DCBOFOPN  Test if the DCB is open
+         JO    CL0200              Br if so
+         TM    (DCBBUFCB-IHADCB)+3(1),1  Test if there is a buffer pool
+         JO    CL0200              Br if not
+         FREEPOOL (1)              Free the buffer pool
+CL0200   TM    0(2),X'80'          Test if end of the parm list
+         LA    2,4(,2)             Compute addr of the next DCB pointer
+         JZ    CL0100              Br if not end of the parm list
+         RETURN (14,2),T           Restore registers & return
+         EJECT
+         CNOP  0,8
+FMTLINE  BASR  15,0                Store current address in reg 15
+         SAVE  14,,FMTLINE         Save reg 14
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    15,8(,13)           Add new save area to the
+         ST    13,4(,15)            save area chain
+         LR    13,15               Establish new save area pointer
+         LA    0,FMTWORK           Load addr of the MINIFMT work area
+         L     15,=V(MINIFMT)      Load addr of MINIFMT
+         CALL  (15)                Format the line
+         BRAS  14,OUTEDIT          Write the formatted line
+         L     13,4(,13)           Load addr of the higher save area
+         RETURN 14,T               Restore reg 14 & return
+         SPACE 1
+PATCHSZ  EQU   (4096-(*-DISKLIST))/2
+         PUSH  PRINT
+         PRINT DATA
+         DC    (PATCHSZ)S(*)
+         POP   PRINT
+         EJECT
+* DISKLIST CSECT expansion -- The following code and data is not
+* addressable.  It is intended for code and data moved from addressable
+* storage to gain additional addressability.  The code is reached
+* using address constants or by using the BRAS instruction.
+         SPACE 1
+* QSORT compare functions
+         SPACE 1
+         CNOP  0,8
+L        USING VOL,14
+R        USING VOL,1
+SORTCOMP1 SAVE 14                  Save reg 14
+         LM    14,15,0(1)          Load parm list
+         L     14,0(,14)           Load VOL address
+         L     1,0(,15)            Load VOL address
+         LA    15,1                Set initial RC
+         CLC   L.VSER,R.VSER       Compare volume serials
+         JH    SC0300              Br if high
+         JL    SC0200              Br if low
+         J     SC0100              Br if equal
+         SPACE 5
+L        USING ADSN,14
+R        USING ADSN,1
+         CNOP  0,8
+SORTCOMP2 SAVE 14
+         LM    14,15,0(1)
+         L     14,0(,14)
+         L     1,0(,15)
+         LA    15,1
+         CLC   L.ADSNAME,R.ADSNAME Compare data set names
+         JL    SC0200
+         JH    SC0300
+         J     SC0100
+         SPACE 5
+         CNOP  0,8
+L        USING XT,14
+R        USING XT,1
+         CNOP  0,8
+SORTCOMP3 SAVE 14
+         LM    14,15,0(1)
+         L     14,0(,14)
+         L     1,0(,15)
+         LA    15,1
+         L     0,L.XTTT            Load true track into reg 0
+         C     0,R.XTTT            Compare
+         JL    SC0200
+         JH    SC0300
+         J     SC0100
+         DROP  L,R
+         SPACE 5
+         CNOP  0,8
+SORTCOMP4 SAVE 14
+         LM    14,15,0(1)
+         L     14,0(,14)
+         L     1,0(,15)
+         LA    15,1
+         CLC   4(6,14),4(1)
+         JL    SC0200
+         JH    SC0300
+*        J     SC0100
+SC0100   SR    15,15
+         J     SC0300
+SC0200   LNR   15,15
+SC0300   RETURN 14,RC=(15)
+         EJECT
+         CNOP  0,8
+PARMSCAN BASR  15,0                Store current address in reg 15
+         USING *,10                Establish addressability
+         SAVE  (14,12),,PARMSCAN   Save registers
+         LR    10,15               Prepare base register
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    13,4(,15)           Add new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish new save area pointer
+         SR    5,5                 Set reg 5 = 0
+         ICM   5,B'0011',0(2)      Load length of parm text
+         BZ    PS1600              Br if 0
+         LA    5,1(5,2)            Compute addr of last byte in text
+         LA    3,2(,2)             Compute addr of first byte in text
+         LA    4,1                 Set reg 4 = 1
+PS0100   LR    6,3                 Save start of parm text
+         CLC   =C'VOL(',0(3)       Test if VOL keyword
+         BE    PS0800              Br if so
+PS0200   CLI   0(3),C','           Test if end of keyword
+         BE    PS0300              Br if not
+         BXLE  3,4,PS0200
+PS0300   LR    7,3                 Copy end of keyword to reg 7
+         SR    7,6                 Compute length of keyword
+         BNP   PS0700              Br if null
+         BCTR  7,0                 Reduce length by 1
+         LA    1,OPTAB             Load addr of the option scan table
+PS0400   CLI   0(1),X'FF'          End of table?
+         BE    PS0700              Br if so
+         CLM   7,B'0001',0(1)      Got the keyword?
+         BNE   PS0600              Not this one
+         EX    7,PS0500            Correct keyword?
+         BNE   PS0600              Br if not
+         OC    OPTION,1(1)         Add the option
+         NC    OPTION,2(1)         Drop the option
+         B     PS0700
+PS0500   CLC   3(*-*,1),0(6)       ** Execute only **
+PS0600   SR    15,15
+         IC    15,0(,1)            Load keyword length
+         LA    1,4(15,1)           Compute addr of next OPTAB entry
+         B     PS0400              Check it
+PS0700   BXLE  3,4,PS0100          Keep looking
+         B     PS1500
+PS0800   LA    3,3(,3)             Compute addr of first volume mask
+PS0900   BXH   3,4,PS1600          Done?  Br if so
+PS1000   LR    6,3
+PS1100   CLI   0(3),C')'           End of list?
+         BE    PS1200              Br if so
+         CLI   0(3),C','           End of volume?
+         BE    PS1200              Br if so
+         BXLE  3,4,PS1100          Bump parm text pointer, br if not  ->
+                                    end of parm text
+PS1200   LR    7,3                 Copy end of vol mask to reg 7
+         SR    7,6                 Compute the length of the vol mask
+         BNP   PS1300              Oops if 0
+         CHI   7,6                 Test the length
+         BH    PS1300              Oops if too long
+         LA    0,16                Load the length
+         GETMAIN RU,LV=(0),LOC=(31,ANY)  Allocate storage
+         MVC   0(4,1),MASKLIST     Add the new element to the mask list
+         ST    1,MASKLIST
+         LA    0,4(,1)             Set start of mask text
+         LA    1,6                 Set the length
+         ICM   7,B'1000',=C' '     Load the fill character
+         MVCL  0,6                 Copy mask text to the mask entry
+PS1300   CR    3,5                 End of PARM text?
+         BH    PS1600              Br if so
+         CLI   0(3),C','           Scan ended w/ ,?
+         BNE   PS1400              Br if not
+         BXLE  3,4,PS1000          Bump pointer, br if in text
+         B     PS1600              Bye bye
+PS1400   CLI   0(3),C')'           Close paren in text?
+         BNE   PS1600              Br if not
+         BXH   3,4,PS1600
+         CLI   0(3),C','           VOL(...) terminaated w/ ),
+         BNE   PS1600              Br if not
+         BXLE  3,4,PS0100          Bump the pointer
+         B     PS1600
+PS1500   CR    3,5                 End of parms?
+         BH    PS1600              Br if so
+         CLI   0(3),C','
+         BNE   PS1600
+         BXLE  3,4,PS0100
+PS1600   ICM   0,B'1111',MASKLIST  Any volumes?
+         BNZ   PS1700              Br if so
+         LA    0,16                Build default VOL(FAN001)
+         GETMAIN RU,LV=(0),LOC=(31,ANY)
+         MVC   0(4,1),MASKLIST
+         ST    1,MASKLIST
+         MVC   4(6,1),=C'FAN001'
+PS1700   L     13,4(,13)           Load addr of the higher save area
+         RETURN (14,12),T          Restore registers & return
+         DROP  10
+         EJECT
+* Build a type R SYSUTX record
+         CNOP  0,8
+GENUTXR  BASR  15,0                Store current address in reg 15
+         USING *,3                 Establish addressability
+         SAVE  (14,3),,GENUTXR     Save registers
+         LR    3,15                Prepare the base register
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    13,4(,15)           Add new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish new save area pointer
+         PUT   SYSUTX              Get space for the record
+         LR    2,1                 Copy the address to reg 2
+         USING KRECORD,2           Establish record addressability
+         XC    0(KLRECL,1),0(1)    Clear the record
+         MVI   KRTYPE,C'R'
+         L     0,VCOUNT
+         STH   0,KRVOLS
+         ZAP   64(8,13),STARTTIM+4(4)  Convert
+         CVB   1,64(,13)                start
+         SR    0,0                       date to
+         D     0,=F'1000'                 DISKLIST
+         AHI   1,1900                      format
+         MHI   1,1000
+         AR    1,0
+         CVD   1,64(,13)
+         OI    71(13),X'0F'
+         UNPK  KRSDATE,64(8,13)
+         ZAP   64(8,13),STOPTIM+4(4)  Convert
+         CVB   1,64(,13)               stop
+         SR    0,0                      date to
+         D     0,=F'1000'                DISKLIST
+         AHI   1,1900                     format
+         MHI   1,1000
+         AR    1,0
+         CVD   1,64(,13)
+         OI    71(13),X'0F'
+         UNPK  KREDATE,64(8,13)
+         UNPK  56(9,13),STARTTIM(5)  Convert start time to
+         TR    56(8,13),HEXTAB        C'hhmmssth'
+         MVC   KRSTIME,56(13)
+         UNPK  56(9,13),STOPTIM(5)   Convert stop time to
+         TR    56(8,13),HEXTAB        C'hhmmssth'
+         MVC   KRETIME,56(13)
+         L     13,4(,13)
+         RETURN (14,3)
+         DROP  2,3
+         EJECT
+         CNOP  0,8
+         USING ADSN,10             Establish ADSN addressability
+         USING KRECORD,8           Establish KRECORD addressability
+GENUTX   BASR  15,0                Store current address in reg 15
+         USING *,9                 Establish GENUTX addressability
+         SAVE  (14,9),,GENUTX      Save registers
+         LR    9,15                Prepare the base register
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    13,4(,15)           Add new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish new save area pointer
+         PUT   SYSUTX              Get a SYSUTX record
+         LR    8,1                 Copy the record address to reg 8
+         XC    0(KLRECL,1),0(1)    Clear the record
+         MVC   KVDSN,ADSNAME       Copy the DSN
+         MVI   KVTYPE,C'V'         Init the record type
+         L     0,ADSALLOC          Copy allocated tracks
+         STCM  0,B'1111',KVALLOC
+         L     0,ADSUSED           Copy used tracks
+         STCM  0,B'1111',KVUSED
+         MVC   KVRECFM,ARECFM
+         MVC   KVVOLSER,(AVOL-A)+DYNWORK
+         MVC   KVDEVTYP,UNITNAME
+         MVC   KVDEVTP,UTYPE
+         MVC   KVLRECL,ALRECL
+         MVC   KVBLKSI,ABLKSIZE
+         MVC   KVDSORG,ADSORG
+         LA    0,KVCREDT           Convert creation date to
+         LA    1,ACREDT             SYSUTX format
+         BAS   14,UTXDATE
+         LA    0,KVEXPDT           Convert expiration date to
+         LA    1,AEXPDT             SYSUTX format
+         BAS   14,UTXDATE
+         LA    0,KVLASTU           Convert reference date to
+         LA    1,AREFD              SYSUTX format
+         BAS   14,UTXDATE
+         L     13,4(,13)           Load addr of the higher save area
+         RETURN (14,9),T           Restore registers & return
+         EJECT
+         CNOP  0,8
+UTXDATE  BASR  15,0                Store current address in reg 15
+         SAVE  14,,UTXDATE         Save reg 14
+         LR    14,0                Copy output area address to reg 14
+         LR    15,1                Copy input area address to reg 15
+         SR    0,0                 Clear reg 0
+         SR    1,1                 Clear reg 1
+         IC    1,0(,15)            Load the year
+         AHI   1,1900              Convert yy to true year
+         MHI   1,1000              Multiply yyyy by 1000
+         ICM   0,B'0011',1(15)     Load ddd
+         AR    1,0                 Combine yyyy and ddd
+         CVD   1,64(,13)           Convert yyyyddd to decimal
+         OI    71(13),X'0F'        Convert PL8'yyyyddd' to
+         UNPK  0(7,14),64(8,13)     decimal digits
+         RETURN 14                 Restore reg 14 & return
+         DROP  8,9,10              Kill addressability
+         EJECT
+         CNOP  0,8
+DYNALLOC BASR  15,0                Store current address in reg 15
+         USING *,10                Establish addressability
+         SAVE  (14,12),,DYNALLOC   Save registers
+         LR    10,15               Prepare base register
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    13,4(,15)           Add new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish new save area pointer
+         LR    2,1                 Copy the RB pointer to reg 2
+         BAS   14,DYNRELOC         Relocate the address constants
+         DYNALLOC ,                Do the allocation
+         LTR   3,15                Test the return code
+         BZ    DYNA0300            Br if RC = 0
+         ST    15,DYNRC            Save the return code
+         BAS   4,*+L'*+4           Br around address
+         DC    AL4(DFPARMS)
+         L     4,0(,4)             Load addr of the Dairfail parm list
+         L     0,0(,2)             Load addr of the RB
+         ST    0,DFS99RBP-DFPARMS(,4)  Save the address for Dairfail
+         LINK  SF=(E,LINKDF),MF=(E,(4))  Inoke Dairfail
+         LA    6,2                 Set reg 6 = number of msg buffers
+         LA    4,DFBUFS-DFPARMS(,4)  Load addr of the first msg buffer
+DYNA0100 LA    15,4                Set reg 15 = length of a RDW
+         LH    5,0(,4)             Load the msg length
+         SR    5,15                Subtract the size of an RDW
+         BNP   DYNA0200            Br if no message
+         LA    1,FMT11             Print the message
+         BAS   14,FMTLINE
+DYNA0200 LA    4,DFBUF2-DFBUF1(,4) Compute addr of the next msg
+         BCT   6,DYNA0100          Do it
+DYNA0300 LR    15,3                Copy the return code to reg 15
+         L     13,4(,13)           Load addr of the higher save area
+         RETURN (14,12),T,RC=(15)  Restore registers & return
+LINKDF   LINK  SF=L,EP=IKJEFF18
+         DROP  10
+         EJECT
+***********************************************************************
+*                                                                     *
+* Title -- DYNRELOC                                                   *
+*                                                                     *
+* Function / Operation -- Translate address offsets in a coded        *
+*   dynamic allocation parameter list to true addresses               *
+*                                                                     *
+* Status / Change Level --                                            *
+*           March 2012                                                *
+*    - Change comment.  The IEFZB4D2 macro name in a comment was      *
+*      incorrectly specified as IEFAB4D2.  The change level was not   *
+*      altered since the only change was in a comment and in this     *
+*      change log.                                                    *
+*    - Added comment about attributes.                                *
+*   V3L0 -- April 2010                                                *
+*                                                                     *
+* Example Calling Sequence --                                         *
+*   ----+----1----+----2----+----3----+----4----+----5----+----6      *
+*            LA    1,DYNPARMS                                         *
+*            BRAS  14,DYNRELOC                                        *
+*            ...                                                      *
+*   DYNPARMS DC    A(X'80000000'+(RB-DYNPARMS))                       *
+*   RB       DC    AL1(S99RBEND-S99RB,S99VRBAL,0,0),2AL2(0)           *
+*            DC    A(TUP001-DYNPARMS)                                 *
+*            DC    2A(0)                                              *
+*   TUP001   DC    A(TU001-DYNPARMS)                                  *
+*            DC    A(TU002-DYNPARMS)                                  *
+*            DC    A(TU003-DYNPARMS)                                  *
+*            DC    A(X'800000000'+(TU004-DYNPARMS))                   *
+*   TU001    DC    AL2(DALDSNAM,1,L'DSN)                              *
+*   DSN      DC    C'SYS1.MACLIB'                                     *
+*   TU002    DC    AL2(DALSTATS,1,1),AL1(8)                           *
+*   TU003    DC    AL2(DALRTORG,1,2),AL2(0)                           *
+*   TU004    DC    AL2(DALRTDDN,1,8),CL8' '                           *
+*                                                                     *
+* Attributes -- DYNRELOC is reenterable, refreshable and reusable.    *
+*   It operates in TCB mode, in problem key and problem state.  It    *
+*   operates in AMODE 24 or 31 that is consistent with the location   *
+*   of the code, the register save area, and the dynamic allocation   *
+*   parameter list.  It uses no external operating system resources.  *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         DC    0D'0'
+         PUSH  USING
+         DROP  ,                   KILL ANY CURRENT USING
+DYNRELOC BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,5                 ESTABLISH ADDRESSABILITY
+         SAVE  (14,5),,DYNRELOC    SAVE REGISTERS
+         LR    5,15                COPY ENTRY POINT ADDRESS TO REG 12
+         LR    2,1                 COPY ADDRESS OF THE RB POINTER TO  ->
+                                    REG 2
+         L     3,0(,1)             LOAD OFFSET OF THE REQUEST BLOCK
+         ALR   3,2                 COMPUTE THE REQUEST BLOCK ADDRESS
+         ST    3,0(,1)             STORE THE REQUEST BLOCK ADDRESS
+         USING S99RB,3             ESTABLISH S99RB ADDRESSABILITY
+         L     4,S99TXTPP          LOAD OFFSET OF THE FIRST TEXT      ->
+                                    UNIT POINTER
+         ALR   4,2                 COMPUTE ADDRESS OF THE TEXT UNIT   ->
+                                    POINTER
+         ST    4,S99TXTPP          STORE ITS ADDRESS IN THE S99RB
+DYNR0100 L     15,0(,4)            LOAD OFFSET OF A TEXT UNIT POINTER
+         LR    14,15               COPY OFFSET TO REG 14
+         N     14,DYNR0300         REMOVE THE VL BIT
+         JZ    DYNR0200            BR IF NO POINTER IN THE POSITION
+         ALR   15,2                COMPUTE ADDRESS OF THE TEXT UNIT
+         ST    15,0(,4)            STORE TEXT UNIT ADDRESS IN THE     ->
+                                    TEXT UNIT POINTER
+DYNR0200 TM    0(4),X'80'          TEST IF LAST TEXT UNIT POINTER
+         LA    4,4(,4)             COMPUTE ADDRESS OF THE NEXT TEXT   ->
+                                    UNIT POINTER
+         JZ    DYNR0100            BR IF NOT THE LAST TEXT UNIT POINTER
+         RETURN (14,5),T           RESTORE REGISTERS & RETURN TO CALLER
+DYNR0300 DC    A(X'7FFFFFFF')      MASK TO REMOVE THE VL BIT
+         DC    0D'0'
+         POP   USING               RESTORE PREVIOUS USING
+         EJECT
+         CNOP  0,8
+LISTMM   BASR  15,0                Store current address in reg 15
+         USING *,7                 Establish addressability
+         SAVE  (14,7),,LISTMM      Save registers
+         LR    7,15                Prepare the base register
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    13,4(,15)           Add new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish new save area pointer
+         LR    2,0                 Copy error code to reg 2
+         LR    3,1                 Copy chain header to reg 3
+         ICM   15,B'1111',0(3)     Load addr of the first element
+         BZ    LMM0400             Br if no elements
+         LA    0,FMTWORK           Build part of the 1st line
+         LA    1,FMT10
+         L     15,=V(MINIFMT)
+         CALL  (15)
+         LH    6,(DCBLRECL-IHADCB)+PRINT  Load maximum line length
+         AR    6,1                 Compute end of the line
+         LR    2,1                 Save the line address in reg 2
+         LH    5,0(,1)             Load length so far
+         AR    5,1                 Compute current position
+         L     15,=V(QSORTL)       Sort the elements
+         CALL  (15),((3)),MF=(E,SORTPARM4)
+LMM0100  ICM   4,B'1111',0(3)      Load addr of the next element
+         BZ    LMM0300             Br if end of chain
+         MVC   0(4,3),0(4)         Remove element from the chain
+         LA    15,7(,5)            Compute trial end
+         CR    15,6                Test trial end w/ end of line
+         BNH   LMM0200             Br if volser will fit
+         SR    5,2                 Compute the length
+         STH   5,0(,2)             Store the length in the RDW
+         LR    1,2                 Write the line
+         BRAS  14,OUTEDIT
+         MVI   4(2),C' '           Init the new line
+         LA    5,5(,2)
+LMM0200  MVI   0(5),C' '           Insert a blank
+         MVC   1(6,5),4(4)         Copy the volume to the line
+         LA    0,16                Free the volume element
+         FREEMAIN RU,LV=(0),A=(4)
+         LA    5,7(,5)             Update line position
+         B     LMM0100             Go do the next volume
+LMM0300  SR    5,2                 Compute the line length
+         STH   5,0(,2)             Store the length in the RDW
+         LR    1,2                 Write the last line
+         BRAS  14,OUTEDIT
+LMM0400  L     13,4(,13)           Load addr of the higher save area
+         RETURN (14,6)             Restore registers & return
+         DROP  7
+         EJECT
+         CNOP  0,8
+OUTEDIT  BASR  15,0                Store current address in reg 15
+         USING *,7                 Establish addressability
+         SAVE  (14,7),,OUTEDIT     Save registers
+         LR    7,15                Prepare base register
+         LR    2,1                 Copy line address to reg 2
+         SR    3,3                 Set reg 3 = 0
+         SR    4,4                 Set reg 4 = 0
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    15,8(,13)           Add new save area to the
+         ST    13,4(,15)            save area chain
+         LR    13,15               Establish new save area pointer
+*        LH    0,0(,2)             Load the line length
+*        CH    0,(DCBLRECL-IHADCB)+PRINT  Test the length
+*        JNH   *+L'*+6             Br if length <= lrecl
+*        MVC   0(2,2),(DCBLRECL-IHADCB)+PRINT  Reset the length
+         IC    3,4(,1)             Load the carriage control character
+         IC    4,OELINES(3)        Load lines this line will print
+         AH    4,LINECT            Add current page position
+         CHI   4,60                Compare new page position with     ->
+                                    max lines on a page
+         JNH   OE0200              Br if new line will fit on the     ->
+                                    current page
+         AP    PAGENUM,=P'1'       Add 1 to the page number
+         MVC   PAGE#,=X'402020202120'  Convert page number to digits
+         ED    PAGE#,PAGENUM
+         PUT   PRINT,PAGEHDR       Write the page header
+         MVI   4(2),C'0'           Replace the carriage control
+         LHI   4,3                 Set new page position
+         ICM   5,B'1111',SUBHDR    Load address of the subheader ptrs
+         BZ    OE0200              Br if none
+OE0100   SR    15,15               Set reg 15 = 0
+         L     1,0(,5)             Load addr of a subheader line
+         IC    15,4(,1)            Load its carriage control
+         IC    15,OELINES(15)      Load lines this line prints
+         AR    4,15                Add to reg 4
+         LR    0,1                 Copy the line address to reg 0
+         PUT   PRINT,(0)           Print the line
+         TM    0(5),X'80'          Test if end of the subheader list
+         LA    5,4(,5)             Compute addr of the next pointer
+         BZ    OE0100              Br if last pointer not the last
+OE0200   PUT   PRINT,(2)           Write the line
+         STH   4,LINECT            Update the page position
+         STC   3,4(,2)             Restore original carriage control
+         L     13,4(,13)           Load addr of the higher save area
+         RETURN (14,7),T           Restore registers & return
+         DROP  7                   Kill OUTEDIT addressability
+         EJECT
+* Compute allocated space in several extents and create a new XT entry
+* for each extent
+*  Entry Register Use
+*           0     Sum of allocated space so far
+*           1     Address of first extent entry
+*           2     Number of extent entries to process
+*           3     Number of extents in data set
+*          13     Save area pointer
+*          14     Return address
+*          15     ---
+*  Exit     0     Sum of allocates space so far
+*           1     Destroyed
+*           2     Destroyed
+*           3     Remaining extents in data set
+*          14     Return address
+*          15     Destroyed
+SPACEEA  BASR  15,0                Store current address in reg 15
+         SAVE  14,,SPACEEA         Save register 14
+         STM   4,6,16(13)          Save registers 4 through 6
+SPE0100  ICM   14,B'1111',2(1)     Load starting CC
+         SRL   14,4                Isolate the 28 bit CC
+         ICM   15,B'1111',6(1)     Load ending CC
+         SRL   15,4                Isolate the 28 bit CC
+         MH    14,CYLSIZE          Convert starting snd ending CC to
+         MH    15,CYLSIZE           true track
+         ST    0,68(,13)           Save reg 0
+         IC    0,5(,1)             Load H from start of extent
+         N     0,=A(X'F')          Isolate the 4 bit H
+         AR    14,0                Add H to starting CC * CYLSIZE
+         IC    0,9(,1)             Load H from end of extent
+         N     0,=A(X'F')          Isolate the 4 bit H
+         AR    15,0                Add H to CC * CYLSIZE
+         L     0,68(,13)           Restore reg 0
+         LR    4,14                Copy starting true track to reg 4
+         SR    15,14               Compute tracks in extent
+         AHI   15,1                Add 1
+         LR    5,1                 Copy address of extent entry to R5
+         LR    6,15                Copy tracks in extent to reg 6
+         AR    0,15                Add tracks in extent to total tracks
+         ST    0,28(,13)           Save reg 0
+         LA    0,XTSIZE            Load size
+         GETMAIN RU,LV=(0),LOC=(31,ANY)  Get storage for an extent
+         MVC   XTNEXT-XT(,1),XTLIST  Add extent to the
+         ST    1,XTLIST               extent list
+         ST    4,XTTT-XT(,1)
+         ST    6,XTTRACKS-XT(,1)   Save extent size
+         ST    10,XTADSN-XT(,1)    Save address of the ADSN
+         MVC   XTSOURCE-XT(,1),DATE1
+         L     0,28(,13)           Reload reg 0
+         LA    1,10(,5)            Compute addr of the next extent
+         BRCT  3,SPE0200           Br if more extents to process
+         LM    4,6,16(13)          Restore regs 4 through 6
+         RETURN 14                 Restore reg 14 & return
+SPE0200  BRCT  2,SPE0100           Br if more extents in the group
+         LM    4,6,16(13)          Restore regs 4 through 6
+         RETURN 14                 Restore reg 14 & return
+         EJECT
+* Convert a date in VTOC format to CL8'mm/dd/yy'
+*
+* A VTOC format date is a 3 byte binary value.  The first byte is year
+* based from 1900; the second and third bytes are day of year, from 1
+* to 366.
+*
+* The leap year determination is the entire Gregorian leap year
+* calculation.  Century years that are not a multiple of 400 are not
+* leap years
+         SPACE 1
+         CNOP  0,8
+CNVTDATE BASR  15,0                Store current address in reg 15
+         USING *,3                 Establish addressability
+         SAVE  (14,3),,CNVTDATE    Save registers
+         LR    3,15                Prepare base register
+         LR    2,0                 Copy output area address to reg 2
+         MVC   0(8,2),=CL8' ---'   Init the output area
+         ICM   1,B'0111',0(1)      Load X'yyddd'
+         BZ    CNVD0300            Br if 0s
+         N     1,=A(X'FFFFFF')     Isolate yyddd
+         MVC   0(8,2),=C'  /  /  ' Init the output area
+         SR    0,0                 Set reg 0 = 0
+         D     0,=A(64*1024)       Separate yy and ddd
+         AHI   1,1900              Convert yy to true year
+         LR    14,1                Copy yyyy to reg 14
+         LR    15,1                 and reg 15
+         N     14,=A(B'11')        Isolate the two low order bits
+         BNZ   CNVD0100            Br if yyyy is not a leap year
+         D     14,=F'100'          Divide yyyy by 100
+         LTR   14,14               Test the remainder
+         BNZ   CNVD0200            Br if yyyy is not a century year
+         N     15,=A(B'11')        Test if yyyy is a century year     ->
+                                    leap year
+         BZ    CNVD0200            Br if so
+CNVD0100 CHI   0,31+28             Test if January or February
+         BNH   CNVD0200            Br if January or February
+         AHI   0,1                 Add 1 to day of year
+CNVD0200 CVD   1,64(,13)           Convert yyyy to decimal
+         UNPK  6(2,2),64(8,13)     Convert yyyy to digits
+         OI    7(2),X'F0'          Make last digit valid EBCDIC
+         LR    1,0                 Copy ddd to reg 1
+         SR    15,15               Set reg 15 = 0
+         IC    15,CNVTAB2(1)       Load month of year for ddd
+         CVD   15,64(,13)          Convert month
+         UNPK  0(2,2),64(8,13)      to EBCDIC digits
+         OI    1(2),X'F0'
+         SLL   15,1                Multiply month by 2
+         SH    1,CNVTAB1(15)       Compute day of month for ddd
+         CVD   1,64(,13)           Convert day of month to
+         UNPK  3(2,2),64(8,13)      EBCDIC digits
+         OI    4(2),X'F0'
+CNVD0300 RETURN (14,3)             Restore registers & return
+         DROP  3                   Kill addressability
+         DC    0H'0'
+CNVTAB1  EQU   *-2
+         DC    AL2(0,31,31+29,31+29+31) Jan, Feb, Mar, Apr
+         DC    AL2(31+29+31+30)                       May
+         DC    AL2(31+29+31+30+31)                    Jun
+         DC    AL2(31+29+31+30+31+30)                 Jul
+         DC    AL2(31+29+31+30+31+30+31)              Aug
+         DC    AL2(31+29+31+30+31+30+31+31)           Sep
+         DC    AL2(31+29+31+30+31+30+31+31+30)        Oct
+         DC    AL2(31+29+31+30+31+30+31+31+30+31)     Nov
+         DC    AL2(31+29+31+30+31+30+31+31+30+31+30)  Dec
+CNVTAB2  EQU   *-1
+         DC    31AL1(1),29AL1(2),31AL1(3),30AL1(4),31AL1(5),30AL1(6)
+         DC    31AL1(7),31AL1(8),30AL1(9),31AL1(10),30AL1(11),31AL1(12)
+         DC    0D'0'
+OELINES  DC    0XL256'0'
+* These statements depend on the EBCDIC collating sequence
+         DC    (C' ')X'FF',AL1(1) Blank < + < - < 0              1 OF 5
+         DC    (C'+'-(*-OELINES))X'FF',AL1(0)                    2 OF 5
+         DC    (C'-'-(*-OELINES))X'FF',AL1(3)                    3 OF 5
+         DC    (C'0'-(*-OELINES))X'FF',AL1(2)                    4 OF 5
+         DC    (256-(*-OELINES))X'FF'                            5 OF 5
+         SPACE 1
+HDRTXT2  DC    AL2(HDRTXT2L,0),C'     TRACKS     EX  DS'
+HDRTXT2L EQU   *-HDRTXT2
+         SPACE 1
+HDRTXT3  DC    AL2(HDRTXT3L,0),C'  ALLOCD  USED  TNT ORG RECFM LRECL'
+         DC    C' BLKSZ CR DATE  REF DATE EXPDT    DATA SET NAME'
+HDRTXT3L EQU   *-HDRTXT3
+         SPACE 1
+HDRTXT4  DC    AL2(HDRTXT4L,0),2C' ',6C'-',C' ',6C'-',C' ',3C'-',C' '
+         DC    3C'-',C' '
+         DC    5C'-',C' ',5C'-',C' ',5C'-',C' ',8C'-',C' ',8C'-'
+         DC    C' ',8C'-',C' ',44C'-'
+HDRTXT4L EQU   *-HDRTXT4
+         SPACE 1
+HDRTXT5  DC    AL2(HDRTXT5L,0),7C' ',C'START   START          DATA'
+HDRTXT5L EQU   *-HDRTXT5
+         SPACE 1
+HDRTXT6  DC    AL2(HDRTXT6L,0),CL7' ERR',C'CCHH     TT   TRACKS   SOURC>
+               E'
+         DC    C'   OWNING DATA SET'
+HDRTXT6L EQU   *-HDRTXT6
+         SPACE 1
+HDRTXT7  DC    AL2(HDRTXT7L,0),CL5' ---',C'-------- ------ ------ '
+         DC    C'---------- ',44C'-'
+HDRTXT7L EQU   *-HDRTXT7
+         DC    0D'0'
+         EJECT
+DKLDATA  CSECT
+SAVEAREA DC    (5*9)D'0'           5 72 byte OS/360 save areas
+FMTWORK  DC    XL200'0'            MINIFMT work area
+DYNRC    EQU   FMTWORK
+HEXTAB   EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+STARTTM  DC    FD'0'
+STOPTM   DC    FD'0'
+STARTTIM DC    XL8'0'
+STOPTIM  DC    XL8'0'
+CPUTIME  DC    PL16'0'
+DYNWORK  DC    XL256'0'
+DATE1    DC    CL8' '
+DATE2    DC    CL8' '
+DATE3    DC    CL8' '
+         PUSH  PRINT
+         PRINT NOGEN
+         UCBSCAN MF=(L,SCANPL)
+         POP   PRINT
+SCANWORK DC    XL100'0'
+SCANUCB  DC    XL48'0',0D'0'
+VTOCIOB  DC    0XL40'0',AL1(X'42',0,0,0),A(VTOCECB,0,0,VTOCCCWS,VTOCDCB>
+               ,0,0)
+VTOCSEEK DC    XL8'0'
+LINECT   DC    H'255'              Initial page position
+CYLSIZE  DC    H'15'               Tracks / cylinder for current volume
+VTOCECB  DC    F'0'
+VTOCDS   DC    A(*-*)              Addr of first ADSN for current vol
+FREESPDS DC    A(*-*)              Addr of "free space" ADSN
+MAJOR    DC    A(*-*)              Volumes with major errors
+MINOR    DC    A(*-*)              Volumes with minor errors
+SUBHDR   DC    A(*-*)              Address of sub header pointera
+SUBHDR1  DC    A(HDRTXT1,HDRTXT2,HDRTXT3,X'80000000'+HDRTXT4)
+SUBHDR2  DC    A(HDRTXT1,HDRTXT5,HDRTXT6,X'80000000'+HDRTXT7)
+SORTPARM1 CALL ,(VLIST,VOFF,SORTCOMP1),MF=L
+SORTPARM2 CALL ,(DSLIST,VOFF,SORTCOMP2),MF=L
+SORTPARM3 CALL ,(XTLIST,VOFF,SORTCOMP3),MF=L
+SORTPARM4 CALL ,(*-*,VOFF,SORTCOMP4),MF=L
+VOFF     DC    A(VNEXT-VOL)
+VLIST    DC    A(*-*)
+VCOUNT   DC    F'0'
+F3LIST   DC    A(*-*)
+F5F7LIST DC    A(*-*)
+DSLIST   DC    A(*-*)
+XTLIST   DC    A(*-*)
+MASKLIST DC    A(*-*)
+         PUSH  PRINT
+         PRINT NOGEN
+OPARM01  OPEN  (PRINT,OUTPUT),MF=L
+CPARM01  CLOSE (PRINT,,SYSUTX),MF=L
+OPARM02  OPEN  VTOCDCB,MF=L
+CPARM02  CLOSE VTOCDCB,MF=L
+OPARM03  OPEN  (SYSUTX,OUTPUT),MF=L
+PRINT    DCB   DSORG=PS,MACRF=PM,DDNAME=SYSPRINT,RECFM=VBA,LRECL=125, ->
+               DCBE=PRTDCBE
+VTOCDCB  DCB   MACRF=E,DDNAME=FILLMEIN,EXLST=XLIST,DCBE=VTOCDCBE
+XLIST    DC    0A(0),AL1(X'80'+7),AL3(VTOCJFCB)
+SYSUTX   DCB   DSORG=PS,MACRF=PL,DDNAME=SYSUTX,RECFM=FB,LRECL=KLRECL, ->
+               DCBE=UTXDCBE
+VTOCJFCB DC    0XL176'0'
+         IEFJFCBN ,
+PRTDCBE  DCBE  RMODE31=BUFF
+VTOCDCBE DCBE ,                    Future extended attribute support
+UTXDCBE  DCBE  RMODE31=BUFF
+         POP   PRINT
+DSCBCNT  DC    F'0'                Number of DSCBs
+F0DSCB   DC    F'0'                Number of Format 0 DSCBs
+         DC    0D'0'
+UNITNAME DC    CL8' '
+         LTORG ,
+*                  ----+----1----+----2----+
+EDMASK   DC    0C' NNNNNNNNNNNNNNNNNNNNNNNNN.NN',C' ',23X'20',X'2120',C>
+               '.',2X'20'
+UTYPE    DC    BL4'0'
+VTOCI    DC    AL1(0)              Copy of DS4VTOCI for current volume
+EFLVL    DC    AL1(0)              Copy of DS4EFLVL
+EFPTR    DC    XL5'0'              Copy of DS4EFPTR
+DEVDT    DC    AL1(0)
+OPTION   DC    AL1(0)
+EXTMAP   EQU   X'08'
+OPTAB    DC    AL1(5,EXTMAP,255),CL6'EXTMAP'
+         DC    AL1(7,0,255-EXTMAP),CL8'NOEXTMAP'
+         DC    X'FF'
+VFLAGS   DC    X'00'
+VERR     EQU   X'02'
+LEFT     EQU   ((120-L'HDR)/2)+1
+RIGHT    EQU   111-LEFT-L'HDR
+PAGEHDR  DC    AL2(PAGEHDRL,0),CL(LEFT)'1(DISKLIST V5 &SYSDATE &SYSTIME>
+               )'
+HDR      DC    C'V T O C   A N A L Y S I S   U T I L I T Y'
+         DC    CL(RIGHT)' ',C'PAGE'
+PAGE#    DC    C' NNNNN'
+PAGEHDRL EQU   *-PAGEHDR
+PAGENUM  DC    P'00000'
+         SPACE 1
+FMT01    DC    AL.2(2),AL.6(4),AL1(1,1),X'FF' Format system date & time
+         SPACE 1
+         USING ADSN,10
+FMT02    DC    AL.2(2),AL.6(0),AL1(L'CC,L'CC),AL4(CC)
+         DC    AL.2(3),AL.6(1),AL1(L'ADSALLOC,7),SL2(ADSALLOC)
+         DC    AL.2(3),AL.6(1),AL1(L'ADSUSED,7),SL2(ADSUSED)
+         DC    AL.2(3),AL.6(1),AL1(L'ANOEPVX,4),SL2(ANOEPVX)
+         DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(9),AL1(2,4),SL2(ADSORG)
+         DC    AL.2(3),AL.6(8),AL1(L'ARECFM,5),SL2(ARECFM)
+         DC    AL.2(3),AL.6(1),AL1(L'ALRECL,6),SL2(ALRECL)
+         DC    AL.2(3),AL.6(1),AL1(L'ABLKSIZE,6),SL2(ABLKSIZE)
+         DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(0),AL1(L'DATE1,L'DATE1+1),SL2(DATE1)
+         DC    AL.2(3),AL.6(0),AL1(L'DATE2,L'DATE2+1),SL2(DATE2)
+         DC    AL.2(3),AL.6(0),AL1(L'DATE3,L'DATE3+1),SL2(DATE3)
+         DC    AL.2(3),AL.6(0),AL1(L'ADSNAME,0),SL2(ADSNAME),X'FF'
+         SPACE 1
+FMT03    DC    AL.2(2),AL.6(0),AL1(L'CC,L'CC),AL4(CC)
+         DC    AL.2(3),AL.6(1),AL1(L'ADSALLOC,7),SL2(ADSALLOC)
+         DC    AL.2(2),AL.6(6),AL1(7)   7 BLANKS
+         DC    AL.2(3),AL.6(1),AL1(L'ANOEPVX,4),SL2(ANOEPVX)
+         DC    AL.2(2),AL.6(6),AL1(50)  50 BLANKS
+         DC    AL.2(3),AL.6(0),AL1(L'ADSNAME,0),SL2(ADSNAME),X'FF'
+         DROP  10
+         SPACE 1
+         USING XT,10
+         USING ADSN,9
+FMT04    DC    AL.2(2),AL.6(0),AL1(L'CC,L'CC),AL4(CC)
+         DC    AL.2(3),AL.6(0),AL1(L'XTFLAG,L'XTFLAG),SL2(XTFLAG)
+         DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(2),AL1(4,0),SL2(DATE1)
+         DC    AL.2(3),AL.6(1),AL1(L'XTTT,7),SL2(XTTT)
+         DC    AL.2(3),AL.6(1),AL1(L'XTTRACKS,7),SL2(XTTRACKS)
+         DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(2),AL1(L'XTSOURCE,0),SL2(XTSOURCE)
+         DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(0),AL1(L'ADSNAME,0),SL2(ADSNAME),X'FF'
+         DROP  9,10
+         SPACE 1
+FMT05    DC    AL1(L'FMT05A)
+FMT05A   DC    C' NO VOLUMES MATCH THE VOLUME SELECTION CRITERIA',X'FF'
+         SPACE 1
+FMT06    DC    AL1(L'FMT06A)
+FMT06A   DC    C'-DEFAULT VOLUME SELECTION CRITERIA USED',X'FF'
+         SPACE 1
+FMT07    DC    AL1(L'FMT07A)
+FMT07A   DC    C'-PARM='''
+         DC    AL.2(3),AL.6(3),AL1(0,0),SL2(35(13))
+         DC    AL.2(3),AL.6(0),AL1(0,0),SL2(2(2))
+         DC    AL1(L'FMT07B)
+FMT07B   DC    C''' SPECIFIED',X'FF'
+         SPACE 1
+FMT08    DC    AL.2(2),AL.6(6),AL1(21)  21 blanks
+         DC    AL1(6),6C'-',X'FF'
+         SPACE 1
+FMT09    DC    AL.2(2),AL.6(6),AL1(20)  20 blanks
+         DC    AL.2(3),AL.6(1),AL1(4,7),SL2(52(13)),X'FF'
+         SPACE 1
+FMT10    DC    AL1(L'FMT10A)
+FMT10A   DC    C'-VOLUMES WITH '
+         DC    AL.2(3),AL.6(0),AL1(5,5),SL2(0(2))
+         DC    AL1(L'FMT10B)
+FMT10B   DC    C' ERRORS -',X'FF'
+         SPACE 1
+FMT11    DC    AL1(1),C' '
+         DC    AL.2(3),AL.6(3),AL1(0,0),SL2(43(13))  REG 5
+         DC    AL.2(3),AL.6(0),2AL1(0),SL2(4(4)),X'FF'
+         SPACE 1
+FMT12    DC    AL1(L'FMT12A)
+FMT12A   DC    C' VTOC INDEX PROBLEM ON '
+         DC    AL.2(2),AL.6(0),AL1(L'AVOL,0),AL4((AVOL-A)+DYNWORK)
+         DC    AL1(L'FMT12B)
+FMT12B   DC    C', CVAFDSM RC = '
+         DC    AL.2(3),AL.6(1),AL1(4,0),SL2(48(13))
+         DC    AL1(L'FMT12C)
+FMT12C   DC    C', CVSTAT = '
+         DC    AL.2(3),AL.6(1),AL1(1,0),SL2((CVSTAT-CVPL)+DSMPARM)
+         DC    AL1(L'FMT12D)
+FMT12D   DC    C' (X'''
+         DC    AL.2(3),AL.6(2),AL1(1,0),SL2((CVSTAT-CVPL)+DSMPARM)
+         DC    AL1(2),C''')',X'FF'
+         SPACE 1
+FMT13    DC    AL1(L'FMT13A)
+FMT13A   DC    C' ERROR IN FORMAT 5 DSCB CHAIN',X'FF'
+         SPACE 1
+FMT14    DC    AL1(L'FMT14A)
+FMT14A   DC    C' FORMAT 3 DSCB ERROR FOR '
+         DC    AL.2(3),AL.6(0),AL1(L'ADSNAME,0),SL2(ADSNAME-ADSN(10))
+         DC    X'FF'
+         SPACE 1
+         USING ADSN,10
+FMT15    DC    AL.2(2),AL.6(0),AL1(L'CC,L'CC),AL4(CC)
+         DC    AL.2(3),AL.6(1),AL1(L'ADSALLOC,7),SL2(ADSALLOC)
+         DC    AL.2(3),AL.6(1),AL1(L'ADSUSED,7),SL2(ADSUSED)
+         DC    AL.2(3),AL.6(1),AL1(L'ANOEPVX,4),SL2(ANOEPVX)
+         DC    AL.2(2),AL.6(6),AL1(50)  50 BLANKS
+         DC    AL.2(3),AL.6(0),AL1(L'ADSNAME,0),SL2(ADSNAME),X'FF'
+         DROP  10
+         SPACE 1
+FMT99    DC    AL1(L'FMT99A)
+FMT99A   DC    C'0DISKLIST USED '
+         DC    AL.2(2),AL.6(0),AL1(L'EDMASK,0),AL4(EDMASK)
+         DC    AL1(L'FMT99B)
+FMT99B   DC    C' CPU SECONDS AND PROCESSED '
+         DC    AL.2(3),AL.6(1),AL1(L'VCOUNT,0),SL2(VCOUNT)
+         DC    AL1(L'FMT99C)
+FMT99C   DC    C' VOLUMES',X'FF'
+         SPACE 1
+CC       DC    C' '
+         SPACE 1
+A        DC    A(X'80000000'+(ARB-A))
+ARB      DC    AL1(S99RBEND-S99RB,S99VRBAL,0,0)
+         DC    2AL2(0)
+         DC    A(ATXTPP-A,0,0)
+ATXTPP   DC    A(ATXT01-A,ATXT02-A,ATXT03-A,X'80000000'+(ATXT04-A))
+ATXT01   DC    AL2(DALRTDDN,1,L'ADDN)
+ADDN     DC    CL8' '
+ATXT02   DC    AL2(DALUNIT,1,L'AUNIT)
+AUNIT    DC    C'SYSALLDA'
+ATXT03   DC    AL2(DALSTATS,1,1),X'08'
+ATXT04   DC    AL2(DALVLSER,1,L'AVOL)
+AVOL     DC    CL6' '
+AL       EQU   *-A
+         SPACE 1
+U        DC    A(X'80000000'+(URB-U))
+URB      DC    AL1(S99RBEND-S99RB,S99VRBUN,0,0)
+         DC    2AL2(0)
+         DC    A(UTXTPP-U,0,0)
+UTXTPP   DC    A(X'80000000'+(UTXT01-U))
+UTXT01   DC    AL2(DUNDDNAM,1,L'UDDN)
+UDDN     DC    CL8' '
+UL       EQU   *-U
+         SPACE 1
+DSMPARM  CVAFDSM MF=L
+XMAP     DC    0D'0'
+         ICVEDT02 DSECT=NO,ENTRY=100
+DKLDATA  CSECT
+         ORG   XMAP
+         DC    C'ICVEDT02'
+         DC    A(DT2LEN)
+         DC    AL1(DT2LEV)
+         ORG   ,
+         PUSH  PRINT
+         PRINT NOGEN
+         IKJEFFDF DFDSECT=NO,DFDSEC2=NO
+         POP   PRINT
+         ORG   DFPARMS
+         DC    A(*-*)              DFS99RBP
+         DC    A(DYNRC)            DFRCP
+         DC    A(DFZERO)           DFJEFF02
+         DC    A(DFID)             DFIDP
+         DC    A(0)                DFCPPLP
+         DC    A(DFBUFS)           DFBUFP
+         ORG   ,
+DFID     DC    AL1(DFBUFSW,DFSVC99)
+DFZERO   DC    A(0)
+         DC    0D'0'
+VTOCCCWS GENCCWS 110,VTOCIOB,IOBUF
+         SPACE 1
+HDRTXT1  DC    AL2(HDRTXT1L,0),C' VOLUME '
+HDR1VOL  DC    CL6' '
+HDRTXT1L EQU   *-HDRTXT1
+         DC    0D'0'
+IOBUF    COM
+         DS    110XL(DSCBSIZE),0D'0'
+         END   DISKLIST

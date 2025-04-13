@@ -1,0 +1,104 @@
+The SCAN118 program analyzes SMF data to report the IP addresses
+used by TSO users.  SCAN118 is particularly useful where the z/OS
+system is exposed to the internet and session manager products
+such as CA-TPX or the IBM Session Manager product are not used.
+
+SCAN118 uses SMF type 30 records to extract TSO users and type
+118 records to match IP addresses to VTAM LU addresses.  VTAM LU
+addresses are stored in SMF type 30 records.
+
+Member   Purpose
+$DOC     This member
+INSTALL  JCL to use the High Level Assembler to assemble and link
+         SCAN118.
+IVP      JCL to verify operation on SCAN118 after installing
+         SCAN118. The user running this job must have read access
+         to the SMF data sets.
+MINIFMT  A formatting program roughly analagous to the sprintf
+         function in the C standard library.
+OBJECT   The object "decks" from assembling the SCAN118, MINIFMT,
+         QSORTS, and SMFETIME programs.  You can use this member
+         to install or test SCAN118 rather than use the INSTALL
+         and IVP members.
+QSORTS   An in-storage sort utility loosely modeled on the
+         qsort function in the C standard library.
+SCAN118  The SCAN118 program.
+SMFETIME Program to compute elapsed time between two SMF date/time
+         pairs.
+
+***************************** O U T P U T ****************************
+
+SMF DATA FROM 2021/05/24 00:01 TO 2021/05/24 14:46, 3 TSO SESSIONS,...
+BENMAR  05/24 06:22:26->05/24 11:01:17     4:38 TCP06020 73.78.235.175
+SDJRG   05/24 12:40:40->05/24 13:13:14     0:32 TCP06007 86.178.160.75
+FCLARKE 05/24 13:39:36->05/24 13:55:31     0:15 TCP06008 35.142.202.128
+                                            ^       ^         ^
+                  Session duration ---------|       |         |
+                  VTAM LU assigned to the session --|         |
+                  IP V4 address ------------------------------|
+
+TCPIP SESSIONS SORTED BY SESSION START TIME
+05/24 00:01:00->05/24 11:01:20 TCP06020    11:00 73.78.235.175
+05/24 00:01:00->05/24 13:13:17 TCP06007    13:12 86.178.160.75
+05/24 00:01:00->05/24 13:55:35 TCP06008    13:54 35.142.202.128
+05/24 06:22:22->05/24 14:46:42 TCP06020     8:24 73.78.235.175
+05/24 07:15:49->05/24 14:46:42 TCP06001     7:30 90.96.44.34
+05/24 09:19:52->05/24 14:46:42 TCP06003     5:26 174.85.16.96
+05/24 10:45:54->05/24 14:46:42 TCP06004     4:00 108.78.169.47
+05/24 11:29:06->05/24 14:46:42 TCP06006     3:17 66.10.216.82
+05/24 12:40:32->05/24 14:46:42 TCP06007     2:06 86.178.160.75
+05/24 13:39:32->05/24 14:46:42 TCP06008     1:07 35.142.202.128
+05/24 13:44:29->05/24 14:46:42 TCP06009     1:02 37.120.194.108
+
+There are usually more TCPIP sessions than TSO sessions; they
+represent failed TSO LOGONs, or logons to other services such as
+CICS.
+
+IP ADDRESSES BY USE COUNT
+35.142.202.128     2
+73.78.235.175      2
+86.178.160.75      2
+37.120.194.108     1
+66.10.216.82       1
+90.96.44.34        1
+108.78.169.47      1
+174.85.16.96       1
+
+TWO OR MORE USERS USE THE FOLLOWING IP ADDRESSES -
+108.30.191.28   CBT001   FCLARKE  MSTEB
+
+********************************* J C L ********************************
+
+Use JCL like this to run SCAN118.
+
+//        EXEC PGM=SCAN118,PARM='option,option,...,option'
+//SYSPRINT DD   ---
+//SMF      DD   ---
+
+The EXEC stattement options are all keywords and can be
+specified in any order.
+
+SORTTIME -- List the user to IP address report sorted by session
+            start time.
+SORTUSER -- List the user to IP address report sorted by userid
+SORTIP   -- List the user to IP address report sorted by IP address
+DUMPRECS -- Dump SMF records processed by SCAN118.
+NODUMPRECS -- Do not dump SMF records processed by SCAN118.
+SESSION  -- List the IP sessions.
+NOSESSION -- Do not list the IP sessions.
+
+The data set specified by the DD statement with DD name SYSPRINT
+is a sequential data set with REXCFM=VBA, LRECL=125, BLKSIZE=129
+or higher.  It can be a SYSOUT data set.
+
+The data set specified by the DD statement witrh DD name SMF is a
+sequential data set containing SMF data.  If you specify a
+concatenation, the time order of the data in the concatenation is
+immaterial to SCAN118.
+
+The SMF DD statement is optional.  If it is not specified SCAN118
+attempts to allocate and use the currently active MAN data set.
+
+***************************** S U P P O R T ****************************
+
+Contact the author at mvsprog@yahoo.com

@@ -1,0 +1,45 @@
+         EJECT
+* Left justify right justified justifed data
+*          LA    0,L'DATA
+*          LA    1,DATA
+*          BAS   14,LJUST
+*          ...
+* DATA     DC    C'  DATA'
+*
+* Output is C'DATA  '
+         SPACE 1
+         CNOP  0,8
+LJUST    BASR  15,0                Store current address in reg 15
+         USING LJUST,15
+         SAVE  (14,3),,LJUST       Save registers
+         LR    14,1                Copy start of data to reg 14 and
+         LR    2,1                  reg 2
+         LR    3,0                 Copy length to reg 3
+LJ0100   TM    0(1),255-C' '       Find first non-blank
+         BNZ   LJ0200              Br if found
+         LA    1,1(,1)             Update reg 1
+         BCT   0,LJ0100            Keep on looking
+         B     LJ0400              All blanks, exit
+LJ0200   CR    14,1                Test if already left justified
+         BE    LJ0400              Br if so
+         LA    15,0(3,2)           Compute addr of end of data
+         SR    15,1                Compute length to copy
+         BNP   LJ0400              Oops
+         BCTR  15,0                Reduce length by 1 for hardware
+         EX    15,LJ0500           Left justify the data
+         LA    14,1(15,14)         Compute end of string we just copied
+         AR    3,2                 Compute end of input data
+         SR    3,14                Compute bytes to blank
+         BNP   LJ0400              Exit if none
+         LA    0,1                 Set reg 0 = 1
+         SR    3,0                 Subtract 1 from length
+         BM    LJ0400              Exit if <= 0
+         MVI   0(14),C' '          Insert the first blank
+         SR    3,0                 Subtract 1 more from length
+         BM    LJ0400              Exit if <= 0
+         EX    3,LJ0600            Blank the remainder of the data
+LJ0400   RETURN (14,3)             Restore registers & return
+LJ0500   MVC   0(*-*,14),0(1)    **EX only **
+LJ0600   MVC   1(*-*,14),0(14)   **EX only **
+         DC    0D'0'
+         END

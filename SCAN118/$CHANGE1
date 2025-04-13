@@ -1,0 +1,10 @@
+Update to program SCAN118 File 956 from Steve Myers to include port numbers.
+Our company is migrating from the standard telnet port to use secure TN3270
+ports.  The original code reported on sessions, userids, times and IP
+addresses.  We needed the capability to see who is using the old un-secured
+ports as well as the secured ports to determine who still needed to be
+migrated.  I asked our assembler guru to see if he could modify the code to
+accomplish that and he did.
+Submitted by Paul Lemons paul.lemons@vericast.com
+Code modified by Fred Camp fred.camp@vericast.com
+The install instructions from the original doc are still valid.

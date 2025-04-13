@@ -1,0 +1,10 @@
+//SCAN118  JOB (CLK#,APP6,0030,0010),'SCAN118',CLASS=T,MSGCLASS=R,
+//             REGION=6M,NOTIFY=&SYSUID
+//* Insert a JOB statement that matches your installation standards
+//* here
+//* Installation Verification Procedure
+//* The user running this job must have reads access to the SMF MAN
+//*    data sets.
+//IVP     EXEC PGM=SCAN118
+//STEPLIB  DD  DISP=SHR,DSN=CLK2.L3.SCAN118.LOADLIB
+//SYSPRINT DD  SYSOUT=*

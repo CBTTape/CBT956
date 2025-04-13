@@ -1,0 +1,35 @@
+   Addition to CBT tape
+Subject:  Fw: Addition to CBT tape
+From:     "Paul Lemons (Vericast)" <Paul.Lemons@Vericast.com>
+Date:     4/11/2024, 9:59 AM
+To:       Sam Golob <sbgolob@cbttape.org>
+CC:       "Fred Camp (Vericast)" <Fred.Camp@vericast.com>
+
+We are in a project to convert TN3270 access from the standard
+telnet unsecured port(s) to secured ports.  As part of this we
+needed a way to determine which users had been converted to the
+secure ports and those that were still using the unsecured
+ports.  I found Steve Meyers program (scan118) on file 956 and
+we used it as a starting point.  I made a valiant attempt to
+modify this code to add the port number(s) to the output report
+but ended up asking a colleague to accomplish this.  He modified
+the code and now we can see in the report what ports users are
+connecting to.  On a side note IBM recommends using SMF record
+type 119 instead of 118 but we didn't have the time or resources
+to write that code from scratch.
+
+Fred Camp fred.camp@vericast modified the code.  I am submitting
+this with his permission as I feel it may be useful to others.
+
+Attaching the zip file created from the XMI file.
+
+Hope all is well with you.
+
+Paul Lemons
+Systems Engineer IV - Mainframe Infrastucture
+Vericast
+15955 La Cantera Parkway
+San Antonio, TX 78256
+Mobile: 214 686-3749
+Paul.Lemons@Vericast.com
+

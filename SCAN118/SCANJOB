@@ -1,0 +1,51 @@
+//SCAN118J JOB (CLK#,APP6,0030,0010),'SCAN118',CLASS=T,MSGCLASS=R,
+//             REGION=6M,NOTIFY=&SYSUID
+//* ---------------------------------------------------------
+//SUSER   EXEC PGM=SCAN118,PARM='SORTUSER'
+//STEPLIB  DD DISP=SHR,DSN=CLK2.L1.SCAN118.LOADLIB
+//SYSPRINT DD SYSOUT=*
+//SMF      DD DISP=SHR,DSN=P.SY.SMF.DAILY.HISTORY(0)
+//*
+//* ---------------------------------------------------------
+//SIP     EXEC PGM=SCAN118,PARM='SORTIP'
+//STEPLIB  DD DISP=SHR,DSN=CLK2.L1.SCAN118.LOADLIB
+//SYSPRINT DD SYSOUT=*
+//SMF      DD DISP=SHR,DSN=P.SY.SMF.DAILY.HISTORY(0)
+//*
+//* ---------------------------------------------------------
+//STIME   EXEC PGM=SCAN118,PARM='SORTTIME'
+//STEPLIB  DD DISP=SHR,DSN=CLK2.L1.SCAN118.LOADLIB
+//SYSPRINT DD SYSOUT=*
+//SMF      DD DISP=SHR,DSN=P.SY.SMF.DAILY.HISTORY(0)
+//*
+//* ---------------------------------------------------------
+//SESS    EXEC PGM=SCAN118,PARM='SESSION'
+//STEPLIB  DD DISP=SHR,DSN=CLK2.L1.SCAN118.LOADLIB
+//SYSPRINT DD SYSOUT=*
+//SMF      DD DISP=SHR,DSN=P.SY.SMF.DAILY.HISTORY(0)
+//*
+//* ---------------------------------------------------------
+//* The EXEC statement options are all keywords and can be
+//* specified in any order.
+//*
+//*       EXEC PGM=SCAN118,PARM='option,option,...,option'
+//* SORTTIME -- List the user to IP address report sorted by session
+//*             start time.
+//* SORTUSER -- List the user to IP address report sorted by userid
+//* SORTIP   -- List the user to IP address report sorted by IP address
+//* DUMPRECS -- Dump SMF records processed by SCAN118.
+//* NODUMPRECS -- Do not dump SMF records processed by SCAN118.
+//* SESSION  -- List the IP sessions.
+//* NOSESSION -- Do not list the IP sessions.
+//*
+//* The data set specified by the DD statement with DD name SYSPRINT
+//* is a sequential data set with REXCFM=VBA, LRECL=125, BLKSIZE=129
+//* or higher.  It can be a SYSOUT data set.
+//*
+//* The data set specified by the DD statement witrh DD name SMF is a
+//* sequential data set containing SMF data.  If you specify a
+//* concatenation, the time order of the data in the concatenation is
+//* immaterial to SCAN118.
+//*
+//* The SMF DD statement is optional.  If it is not specified SCAN118
+//* attempts to allocate and use the currently active MAN data set.
